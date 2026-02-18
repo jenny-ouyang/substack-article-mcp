@@ -1,0 +1,54 @@
+{
+  "name": "substack-article-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for Substack — access your articles, notes, and engagement data from Claude, Cursor, or any MCP client. Authenticated access to premium/paywalled content.",
+  "type": "module",
+  "bin": {
+    "substack-article-mcp": "dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "substack",
+    "newsletter",
+    "articles",
+    "notes",
+    "claude",
+    "cursor",
+    "claude-desktop",
+    "claude-code",
+    "content",
+    "authenticated",
+    "premium"
+  ],
+  "author": "Jenny Ouyang",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jennyouyang/substack-article-mcp.git"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
+    "cheerio": "^1.0.0",
+    "puppeteer-core": "^24.0.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
