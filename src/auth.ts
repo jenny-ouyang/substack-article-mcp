@@ -146,22 +146,158 @@ export async function runLogin(): Promise<void> {
     process.exit(1);
   }
 
-  saveAuth(sid);
-  console.log("Cookies saved. Validating...");
-
-  const valid = await validateStoredAuth();
+  let subdomain = await detectSubdomainFromPage(page as unknown as PageLike);
   await browser.close();
+
+  if (!subdomain) {
+    subdomain = await detectSubdomainFromApi(sid);
+  }
+  if (!subdomain && process.stdin.isTTY) {
+    subdomain = await promptSubdomain();
+  }
+
+  saveAuth(sid, subdomain ?? undefined);
+
+  if (subdomain) {
+    console.log(`Newsletter: ${subdomain}.substack.com`);
+  }
+
+  console.log("Validating...");
+  const valid = await validateStoredAuth();
 
   if (valid) {
     console.log("\n✅ Authenticated successfully!");
-    console.log(`   Cookies stored in ${AUTH_FILE}`);
-    console.log(
-      "   You can now use the Substack Article MCP server in Cursor, Claude Code, etc."
-    );
+    console.log(`   Saved to ${AUTH_FILE}`);
+    if (subdomain) {
+      console.log(`   Subdomain: ${subdomain} (no need to set SUBSTACK_SUBDOMAIN)`);
+    }
+    console.log("\nYou can now use the Substack Article MCP in Cursor, Claude Code, or Claude Desktop.");
+    await offerToAddMcp();
   } else {
     console.error(
       "\n⚠️  Cookie was saved but validation failed. You may need to try again."
     );
+  }
+}
+
+type PageLike = {
+  url(): string | Promise<string>;
+  goto(url: string, opts?: { waitUntil?: string }): Promise<unknown>;
+};
+
+async function detectSubdomainFromPage(page: PageLike): Promise<string | null> {
+  const urlsToTry = [
+    () => Promise.resolve(page.url()),
+    async () => {
+      await page.goto("https://substack.com/home", { waitUntil: "networkidle2" });
+      await new Promise((r) => setTimeout(r, 3000));
+      return Promise.resolve(page.url());
+    },
+    async () => {
+      await page.goto("https://substack.com/dashboard", { waitUntil: "networkidle2" });
+      await new Promise((r) => setTimeout(r, 2500));
+      return Promise.resolve(page.url());
+    },
+    async () => {
+      await page.goto("https://substack.com/writer", { waitUntil: "networkidle2" });
+      await new Promise((r) => setTimeout(r, 2000));
+      return Promise.resolve(page.url());
+    },
+  ];
+
+  for (const getUrl of urlsToTry) {
+    try {
+      const url = await getUrl();
+      const match = url.match(/https?:\/\/([a-zA-Z0-9-]+)\.substack\.com/);
+      if (match) return match[1];
+    } catch {
+      // continue to next
+    }
+  }
+  return null;
+}
+
+function getCookieHeadersForSid(sid: string): Record<string, string> {
+  return {
+    Cookie: `substack.sid=${sid}; substack.lli=1`,
+    "User-Agent":
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    Accept: "application/json",
+  };
+}
+
+/** Try Substack session/dashboard APIs with the cookie to get publication subdomain. */
+async function detectSubdomainFromApi(sid: string): Promise<string | null> {
+  const headers = getCookieHeadersForSid(sid);
+  const bases = [
+    "https://substack.com/api/v1",
+    "https://substack.com/api",
+  ];
+  const paths = ["/me", "/user", "/session", "/dashboard", "/user/me"];
+  for (const base of bases) {
+    for (const path of paths) {
+      try {
+        const res = await fetch(`${base}${path}`, { headers, redirect: "follow" });
+        const finalUrl = res.url;
+        const match = finalUrl.match(/https?:\/\/([a-zA-Z0-9-]+)\.substack\.com/);
+        if (match) return match[1];
+        const text = await res.text();
+        const data = text.startsWith("{") ? (JSON.parse(text) as Record<string, unknown>) : null;
+        if (data && typeof data === "object") {
+          const pubObj = data["publication"];
+          const sub = (data["subdomain"] ?? data["publication_subdomain"] ?? data["slug"] ?? (pubObj && typeof pubObj === "object" && pubObj !== null ? (pubObj as Record<string, unknown>)["slug"] : undefined)) as string | undefined;
+          if (typeof sub === "string" && /^[a-zA-Z0-9-]+$/.test(sub)) return sub;
+          const pub = data["publication"] ?? data["default_publication"];
+          if (pub && typeof pub === "object" && pub !== null) {
+            const p = pub as Record<string, unknown>;
+            const s = (p["subdomain"] ?? p["slug"]) as string | undefined;
+            if (typeof s === "string" && /^[a-zA-Z0-9-]+$/.test(s)) return s;
+          }
+        }
+      } catch {
+        // skip
+      }
+    }
+  }
+  return null;
+}
+
+async function promptSubdomain(): Promise<string | null> {
+  const readline = await import("node:readline");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question("\nWe couldn't detect your newsletter. Enter your subdomain (e.g. buildtolaunch): ", (answer) => {
+      rl.close();
+      const sub = (answer || "").trim().toLowerCase().replace(/\.substack\.com$/i, "").replace(/^https?:\/\//, "");
+      resolve(sub ? sub : null);
+    });
+  });
+}
+
+async function offerToAddMcp(): Promise<void> {
+  if (!process.stdin.isTTY) return;
+
+  const readline = await import("node:readline");
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  const answer = await new Promise<string>((resolve) => {
+    rl.question("\nAdd MCP to Cursor now? (y/n): ", (a) => {
+      rl.close();
+      resolve((a || "").trim().toLowerCase());
+    });
+  });
+  if (answer !== "y" && answer !== "yes") return;
+
+  try {
+    const { addToConfig } = await import("./setup.js");
+    const { path, updated } = addToConfig("cursor");
+    if (updated) {
+      console.log(`   Added to ${path}`);
+      console.log("   Restart Cursor to use the MCP.");
+    } else {
+      console.log(`   Already in ${path}`);
+    }
+  } catch (err) {
+    console.error("   Could not add to Cursor:", err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -212,8 +348,8 @@ export async function validateStoredAuth(): Promise<boolean> {
   try {
     const headers = getCookieHeaders();
     const subdomain =
-      process.env["SUBSTACK_SUBDOMAIN"] ||
       loadAuth()?.subdomain ||
+      process.env["SUBSTACK_SUBDOMAIN"] ||
       "substack";
 
     const res = await fetch(

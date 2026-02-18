@@ -27,7 +27,7 @@ function getBaseUrl(): string {
     process.env["SUBSTACK_SUBDOMAIN"] || loadAuth()?.subdomain;
   if (!subdomain) {
     throw new Error(
-      "SUBSTACK_SUBDOMAIN environment variable is required. Set it in your MCP config."
+      "Not configured. Run `substack-article-mcp login` to connect your Substack account."
     );
   }
   return `https://${subdomain}.substack.com`;

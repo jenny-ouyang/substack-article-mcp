@@ -4,12 +4,10 @@ import { dirname, join } from "node:path";
 
 const MCP_SERVER_NAME = "substack";
 
+/** MCP entry with no env — server uses subdomain from auth.json after login. */
 const SERVER_ENTRY = {
   command: "npx",
   args: ["-y", "substack-article-mcp"],
-  env: {
-    SUBSTACK_SUBDOMAIN: "your-subdomain",
-  },
 } as const;
 
 type ClientId = "cursor" | "claude-desktop" | "claude-code";
@@ -80,7 +78,7 @@ function ensureMcpServers(config: Record<string, unknown>): Record<string, unkno
   return config;
 }
 
-export function addToConfig(client: ClientId, subdomain: string): { path: string; updated: boolean } {
+export function addToConfig(client: ClientId, _subdomain?: string): { path: string; updated: boolean } {
   const paths = getConfigPaths();
   const path = paths[client];
   if (!path) {
@@ -92,17 +90,14 @@ export function addToConfig(client: ClientId, subdomain: string): { path: string
   const mcpServers = base.mcpServers as Record<string, unknown>;
   const existing = mcpServers[MCP_SERVER_NAME];
 
-  const entry = {
-    command: SERVER_ENTRY.command,
-    args: SERVER_ENTRY.args,
-    env: { SUBSTACK_SUBDOMAIN: subdomain },
-  };
+  const entry = { command: SERVER_ENTRY.command, args: SERVER_ENTRY.args };
 
   const same =
     existing &&
     typeof existing === "object" &&
     (existing as Record<string, unknown>).command === entry.command &&
-    JSON.stringify((existing as Record<string, unknown>).env) === JSON.stringify(entry.env);
+    Array.isArray((existing as Record<string, unknown>).args) &&
+    JSON.stringify((existing as Record<string, unknown>).args) === JSON.stringify(entry.args);
 
   if (same) {
     return { path, updated: false };

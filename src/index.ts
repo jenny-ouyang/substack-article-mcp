@@ -43,19 +43,13 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (command === "setup") {
-    const { runSetup } = await import("./setup-cli.js");
-    await runSetup(args.slice(1));
-    return;
-  }
-
   if (command === "--help" || command === "-h") {
     printHelp();
     return;
   }
 
   if (command === "--version" || command === "-v") {
-    console.log("substack-article-mcp v0.2.0");
+    console.log("substack-article-mcp v0.3.1");
     return;
   }
 
@@ -70,27 +64,15 @@ substack-article-mcp — Substack MCP Server
 
 USAGE
   substack-article-mcp                    Start the MCP server (stdio transport)
-  substack-article-mcp login              Launch Chrome to authenticate with Substack
+  substack-article-mcp login             Launch Chrome to log in; subdomain is saved automatically
   substack-article-mcp login --manual <sid>  Manually provide your substack.sid cookie
-  substack-article-mcp login --check      Check current authentication status
+  substack-article-mcp login --check     Check authentication status
 
-  substack-article-mcp setup add cursor         Add to Cursor (~/.cursor/mcp.json)
-  substack-article-mcp setup add claude-desktop Add to Claude Desktop
-  substack-article-mcp setup add claude-code    Show instructions for Claude Code
-  substack-article-mcp setup list               Show where MCP is configured
-  substack-article-mcp setup remove <client>   Remove from cursor or claude-desktop
+  After login you can use the MCP in Cursor, Claude Desktop, or Claude Code.
+  Add the server to your MCP config once (login can add it to Cursor for you).
 
-  Example (easy install):
-  npx -y substack-article-mcp setup add cursor
-  (prompts for subdomain if needed, then restart Cursor)
-
-MCP CLIENT CONFIGURATION (manual)
-
-  Your subdomain is the part before .substack.com in your newsletter URL.
-  For example: buildtolaunch.substack.com → subdomain is "buildtolaunch"
-
-ENVIRONMENT VARIABLES
-  SUBSTACK_SUBDOMAIN    Your Substack subdomain (required)
+  Manual config: add a server with command "npx", args ["-y", "substack-article-mcp"].
+  No SUBSTACK_SUBDOMAIN needed — it is stored when you log in.
 
 MCP TOOLS
   substack_auth_status  Check authentication status
