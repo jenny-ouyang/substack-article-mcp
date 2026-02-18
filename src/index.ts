@@ -55,7 +55,7 @@ async function main(): Promise<void> {
   }
 
   if (command === "--version" || command === "-v") {
-    console.log("substack-article-mcp v0.1.0");
+    console.log("substack-article-mcp v0.2.0");
     return;
   }
 
