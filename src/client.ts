@@ -1,3 +1,4 @@
+import { load } from "cheerio";
 import { getCookieHeaders, loadAuth } from "./auth.js";
 
 export interface SubstackArticle {
@@ -58,6 +59,37 @@ async function apiGet(endpoint: string): Promise<unknown> {
   return res.json();
 }
 
+/** Fetch article HTML page with auth and extract post body (fallback when API returns truncated paid content). */
+async function fetchArticleBodyFromPage(slug: string): Promise<string> {
+  const baseUrl = getBaseUrl();
+  const headers = getCookieHeaders();
+  const res = await fetch(`${baseUrl}/p/${slug}`, {
+    headers: {
+      ...headers,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    },
+  });
+  if (!res.ok) return "";
+  const html = await res.text();
+  const $ = load(html);
+  const selectors = [
+    ".body.markup",
+    "[data-testid='post-body']",
+    ".post-body",
+    ".body",
+    ".entry-content",
+    "article .body",
+  ];
+  for (const sel of selectors) {
+    const el = $(sel).first();
+    if (el.length) {
+      const raw = el.html()?.trim();
+      if (raw && raw.length > 500) return raw;
+    }
+  }
+  return "";
+}
+
 function normalizePost(raw: Record<string, unknown>): SubstackArticle {
   return {
     id: raw["id"] as number,
@@ -110,10 +142,25 @@ export async function getArticle(
     unknown
   >;
 
+  let bodyHtml = (raw["body_html"] as string) || "";
+  const truncatedBodyText = raw["truncated_body_text"] as string | undefined;
+  const wordCount = raw["wordcount"] as number | undefined;
+  const isPaid = (raw["audience"] as string) === "only_paid";
+  const slug = (raw["slug"] as string) || slugOrId;
+
+  const likelyTruncated =
+    !bodyHtml ||
+    (truncatedBodyText != null && truncatedBodyText.length > 0) ||
+    (wordCount != null && wordCount > 200 && bodyHtml.length < wordCount * 5);
+  if (isPaid && likelyTruncated) {
+    const fromPage = await fetchArticleBodyFromPage(slug);
+    if (fromPage.length > bodyHtml.length) bodyHtml = fromPage;
+  }
+
   return {
     ...normalizePost(raw),
-    bodyHtml: (raw["body_html"] as string) || "",
-    truncatedBodyText: raw["truncated_body_text"] as string | undefined,
+    bodyHtml,
+    truncatedBodyText,
   };
 }
 

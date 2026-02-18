@@ -10,6 +10,8 @@ interface StoredAuth {
   substackSid: string;
   extractedAt: string;
   subdomain?: string;
+  /** Real JWT for paid/subscriber context; if missing, we send "substack.lli=1" which can yield truncated paid content */
+  substackLli?: string;
 }
 
 export function getAuthDir(): string {
@@ -31,12 +33,17 @@ export function loadAuth(): StoredAuth | null {
   }
 }
 
-export function saveAuth(sid: string, subdomain?: string): void {
+export function saveAuth(
+  sid: string,
+  subdomain?: string,
+  lli?: string
+): void {
   getAuthDir();
   const data: StoredAuth = {
     substackSid: sid,
     extractedAt: new Date().toISOString(),
     subdomain,
+    ...(lli ? { substackLli: lli } : {}),
   };
   writeFileSync(AUTH_FILE, JSON.stringify(data, null, 2), "utf-8");
 }
@@ -48,8 +55,12 @@ export function getCookieHeaders(): Record<string, string> {
       "Not authenticated. Run `substack-article-mcp login` first to connect your Substack account."
     );
   }
+  const lli =
+    auth.substackLli && auth.substackLli.length > 10
+      ? auth.substackLli
+      : "1";
   return {
-    Cookie: `substack.sid=${auth.substackSid}; substack.lli=1`,
+    Cookie: `substack.sid=${auth.substackSid}; substack.lli=${lli}`,
     "User-Agent":
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
   };
@@ -138,9 +149,9 @@ export async function runLogin(): Promise<void> {
   console.log("│  your session cookie is detected.            │");
   console.log("└─────────────────────────────────────────────┘\n");
 
-  const sid = await waitForCookie(page, "substack.sid", 300_000);
+  const cookies = await waitForSubstackCookies(page, 300_000);
 
-  if (!sid) {
+  if (!cookies) {
     console.error("Timed out waiting for login. Please try again.");
     await browser.close();
     process.exit(1);
@@ -150,13 +161,13 @@ export async function runLogin(): Promise<void> {
   await browser.close();
 
   if (!subdomain) {
-    subdomain = await detectSubdomainFromApi(sid);
+    subdomain = await detectSubdomainFromApi(cookies.sid);
   }
   if (!subdomain && process.stdin.isTTY) {
     subdomain = await promptSubdomain();
   }
 
-  saveAuth(sid, subdomain ?? undefined);
+  saveAuth(cookies.sid, subdomain ?? undefined, cookies.lli ?? undefined);
 
   if (subdomain) {
     console.log(`Newsletter: ${subdomain}.substack.com`);
@@ -301,11 +312,11 @@ async function offerToAddMcp(): Promise<void> {
   }
 }
 
-async function waitForCookie(
+/** Returns sid and, if present, the real substack.lli JWT (needed for full paid-article content from API). */
+async function waitForSubstackCookies(
   page: { createCDPSession(): Promise<{ send(method: string): Promise<unknown>; detach(): Promise<void> }> },
-  cookieName: string,
   timeoutMs: number
-): Promise<string | null> {
+): Promise<{ sid: string; lli: string | null } | null> {
   const start = Date.now();
 
   while (Date.now() - start < timeoutMs) {
@@ -316,9 +327,10 @@ async function waitForCookie(
       };
       await client.detach();
 
-      const match = result.cookies.find((c) => c.name === cookieName);
-      if (match && match.value) {
-        return match.value;
+      const sid = result.cookies.find((c) => c.name === "substack.sid")?.value;
+      const lli = result.cookies.find((c) => c.name === "substack.lli")?.value ?? null;
+      if (sid && sid.length > 0) {
+        return { sid, lli: lli && lli.length > 10 ? lli : null };
       }
     } catch {
       // Page may have navigated or CDP session failed — retry
@@ -330,9 +342,35 @@ async function waitForCookie(
   return null;
 }
 
-export async function runManualLogin(sid: string): Promise<void> {
-  saveAuth(sid);
+/** Parse Cookie header or single value into sid and optional lli. */
+function parseCookieInput(input: string): { sid: string; lli?: string } {
+  const trimmed = input.trim();
+  if (trimmed.includes("=") && (trimmed.includes(";") || trimmed.includes("substack."))) {
+    const parts = trimmed.split(";").map((p) => p.trim());
+    let sid = "";
+    let lli: string | undefined;
+    for (const part of parts) {
+      const eq = part.indexOf("=");
+      if (eq === -1) continue;
+      const name = part.slice(0, eq).trim();
+      const value = part.slice(eq + 1).trim();
+      if (name === "substack.sid") sid = value;
+      if (name === "substack.lli" && value.length > 10) lli = value;
+    }
+    if (sid) return lli ? { sid, lli } : { sid };
+  }
+  return { sid: trimmed };
+}
+
+export async function runManualLogin(cookieArg: string): Promise<void> {
+  const { sid, lli } = parseCookieInput(cookieArg);
+  if (!sid) {
+    console.error("Could not find substack.sid in the provided cookie.");
+    process.exit(1);
+  }
+  saveAuth(sid, undefined, lli);
   console.log("Cookie saved. Validating...");
+  if (lli) console.log("(substack.lli captured — paid article content will be available)");
 
   const valid = await validateStoredAuth();
   if (valid) {

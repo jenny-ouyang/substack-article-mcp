@@ -25,16 +25,16 @@ async function main(): Promise<void> {
     }
 
     if (flag === "--manual") {
-      const sid = args[2];
-      if (!sid) {
-        console.error("Usage: substack-article-mcp login --manual <substack.sid value>");
+      const cookieArg = args[2];
+      if (!cookieArg) {
+        console.error("Usage: substack-article-mcp login --manual <substack.sid value OR full Cookie header>");
         console.error(
-          "\nTo get your cookie value:\n1. Open substack.com in Chrome\n2. Open DevTools (F12) → Application → Cookies\n3. Copy the value of 'substack.sid'"
+          "\nTo get your cookie:\n1. Open your Substack in Chrome (e.g. buildtolaunch.substack.com)\n2. DevTools (F12) → Application → Cookies → select substack.com\n3. Copy either the value of 'substack.sid' or the full Cookie header (so we can use substack.lli for paid articles)"
         );
         process.exit(1);
       }
       const { runManualLogin } = await import("./auth.js");
-      await runManualLogin(sid);
+      await runManualLogin(cookieArg);
       return;
     }
 
@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   }
 
   if (command === "--version" || command === "-v") {
-    console.log("substack-article-mcp v0.3.1");
+    console.log("substack-article-mcp v0.3.2");
     return;
   }
 
@@ -65,7 +65,7 @@ substack-article-mcp — Substack MCP Server
 USAGE
   substack-article-mcp                    Start the MCP server (stdio transport)
   substack-article-mcp login             Launch Chrome to log in; subdomain is saved automatically
-  substack-article-mcp login --manual <sid>  Manually provide your substack.sid cookie
+  substack-article-mcp login --manual <sid or full Cookie>  Paste substack.sid or full Cookie (include substack.lli for paid articles)
   substack-article-mcp login --check     Check authentication status
 
   After login you can use the MCP in Cursor, Claude Desktop, or Claude Code.
