@@ -35,7 +35,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jennyouyang/substack-article-mcp.git"
+    "url": "git+https://github.com/jenny-ouyang/substack-article-mcp.git"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
