@@ -43,6 +43,12 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === "setup") {
+    const { runSetup } = await import("./setup-cli.js");
+    await runSetup(args.slice(1));
+    return;
+  }
+
   if (command === "--help" || command === "-h") {
     printHelp();
     return;
@@ -68,20 +74,17 @@ USAGE
   substack-article-mcp login --manual <sid>  Manually provide your substack.sid cookie
   substack-article-mcp login --check      Check current authentication status
 
-MCP CLIENT CONFIGURATION
+  substack-article-mcp setup add cursor         Add to Cursor (~/.cursor/mcp.json)
+  substack-article-mcp setup add claude-desktop Add to Claude Desktop
+  substack-article-mcp setup add claude-code    Show instructions for Claude Code
+  substack-article-mcp setup list               Show where MCP is configured
+  substack-article-mcp setup remove <client>   Remove from cursor or claude-desktop
 
-  Cursor / Claude Desktop / Claude Code:
-  {
-    "mcpServers": {
-      "substack": {
-        "command": "npx",
-        "args": ["-y", "substack-article-mcp"],
-        "env": {
-          "SUBSTACK_SUBDOMAIN": "your-subdomain"
-        }
-      }
-    }
-  }
+  Example (easy install):
+  npx -y substack-article-mcp setup add cursor
+  (prompts for subdomain if needed, then restart Cursor)
+
+MCP CLIENT CONFIGURATION (manual)
 
   Your subdomain is the part before .substack.com in your newsletter URL.
   For example: buildtolaunch.substack.com → subdomain is "buildtolaunch"

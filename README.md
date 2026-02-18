@@ -6,10 +6,27 @@ MCP server for Substack — access your articles, notes, and engagement data fro
 
 ## Quick Start
 
+### Easy install (one command)
+
+Like [NotebookLM MCP](https://github.com/jacob-bd/notebooklm-mcp-cli), you can add the MCP to your app without editing config files:
+
+```bash
+# Add to Cursor (writes ~/.cursor/mcp.json)
+npx -y substack-article-mcp setup add cursor
+
+# Or Claude Desktop
+npx -y substack-article-mcp setup add claude-desktop
+
+# See where it's configured
+npx -y substack-article-mcp setup list
+```
+
+You’ll be prompted for your Substack subdomain (e.g. `buildtolaunch`) if `SUBSTACK_SUBDOMAIN` isn’t set. Then restart Cursor or Claude Desktop.
+
 ### 1. Authenticate
 
 ```bash
-npx substack-article-mcp login
+npx -y substack-article-mcp login
 ```
 
 This opens Chrome, you log into Substack, and the session cookie is saved automatically. One-time setup that lasts ~2-4 weeks.
@@ -17,12 +34,12 @@ This opens Chrome, you log into Substack, and the session cookie is saved automa
 **Alternative** (manual cookie paste):
 
 ```bash
-npx substack-article-mcp login --manual "your-substack-sid-cookie-value"
+npx -y substack-article-mcp login --manual "your-substack-sid-cookie-value"
 ```
 
-### 2. Configure Your MCP Client
+### 2. Configure Your MCP Client (manual)
 
-Add to your MCP configuration:
+If you prefer to edit config yourself, add to your MCP configuration:
 
 **Cursor** (`~/.cursor/mcp.json`):
 
@@ -91,6 +108,10 @@ substack-article-mcp                         # Start the MCP server
 substack-article-mcp login                   # Authenticate via Chrome (automated)
 substack-article-mcp login --manual <sid>    # Authenticate with a pasted cookie value
 substack-article-mcp login --check           # Check authentication status
+substack-article-mcp setup add cursor        # Add to Cursor (easy install)
+substack-article-mcp setup add claude-desktop # Add to Claude Desktop
+substack-article-mcp setup list              # Show config status
+substack-article-mcp setup remove <client>   # Remove from config
 substack-article-mcp --help                  # Show help
 ```
 
