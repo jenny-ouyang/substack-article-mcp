@@ -49,7 +49,7 @@ async function main(): Promise<void> {
   }
 
   if (command === "--version" || command === "-v") {
-    console.log("substack-article-mcp v0.3.2");
+    console.log("substack-article-mcp v0.5.1");
     return;
   }
 
@@ -60,25 +60,28 @@ async function main(): Promise<void> {
 
 function printHelp(): void {
   console.log(`
-substack-article-mcp — Substack MCP Server
+substack-article-mcp — Substack MCP Server (v0.5.1)
 
-USAGE
-  substack-article-mcp                    Start the MCP server (stdio transport)
-  substack-article-mcp login             Launch Chrome to log in; subdomain is saved automatically
-  substack-article-mcp login --manual <sid or full Cookie>  Paste substack.sid or full Cookie (include substack.lli for paid articles)
-  substack-article-mcp login --check     Check authentication status
+SETUP (run once in your terminal)
+  npx -y substack-article-mcp login
 
-  After login you can use the MCP in Cursor, Claude Desktop, or Claude Code.
-  Add the server to your MCP config once (login can add it to Cursor for you).
+  This opens a Chrome window where you enter your email and password.
+  Your main Chrome stays open — this is a separate, dedicated window.
+  After you log in, it closes automatically and saves your session.
 
-  Manual config: add a server with command "npx", args ["-y", "substack-article-mcp"].
-  No SUBSTACK_SUBDOMAIN needed — it is stored when you log in.
+  Alternative (no window): paste cookies from DevTools
+  npx -y substack-article-mcp login --manual 'substack.sid=...; substack.lli=...'
 
-MCP TOOLS
-  substack_auth_status  Check authentication status
-  list_articles         List published articles with metadata
-  get_article           Get full article content as markdown
-  search_articles       Search articles by keyword
+OTHER COMMANDS
+  npx -y substack-article-mcp login --check    Check if you're authenticated
+  npx -y substack-article-mcp --help            Show this help
+
+⚠️  Do NOT run "npx -y substack-article-mcp" with no arguments.
+   That starts the MCP stdio server — your terminal will look stuck.
+   Cursor/Claude/Claude Code start the server automatically.
+
+MCP TOOLS (available inside your AI app after setup)
+  substack_auth_status  list_articles  get_article  search_articles
 `);
 }
 

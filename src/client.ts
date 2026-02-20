@@ -23,19 +23,27 @@ export interface SubstackArticleFull extends SubstackArticle {
   truncatedBodyText?: string;
 }
 
-function getBaseUrl(): string {
-  const subdomain =
-    process.env["SUBSTACK_SUBDOMAIN"] || loadAuth()?.subdomain;
-  if (!subdomain) {
+/**
+ * Resolve which subdomain to use. Priority:
+ * 1. Explicit subdomain passed per-request (e.g. "platformer" to read someone else's newsletter)
+ * 2. SUBSTACK_SUBDOMAIN env var
+ * 3. Subdomain stored during login (your own newsletter)
+ */
+function resolveBaseUrl(subdomain?: string): string {
+  const resolved =
+    subdomain ||
+    process.env["SUBSTACK_SUBDOMAIN"] ||
+    loadAuth()?.subdomain;
+  if (!resolved) {
     throw new Error(
-      "Not configured. Run `substack-article-mcp login` to connect your Substack account."
+      "No subdomain specified. Either pass a subdomain parameter, or run `substack-article-mcp login` to set a default."
     );
   }
-  return `https://${subdomain}.substack.com`;
+  return `https://${resolved}.substack.com`;
 }
 
-async function apiGet(endpoint: string): Promise<unknown> {
-  const url = `${getBaseUrl()}${endpoint}`;
+async function apiGet(endpoint: string, subdomain?: string): Promise<unknown> {
+  const url = `${resolveBaseUrl(subdomain)}${endpoint}`;
   const headers = getCookieHeaders();
 
   const res = await fetch(url, {
@@ -60,8 +68,8 @@ async function apiGet(endpoint: string): Promise<unknown> {
 }
 
 /** Fetch article HTML page with auth and extract post body (fallback when API returns truncated paid content). */
-async function fetchArticleBodyFromPage(slug: string): Promise<string> {
-  const baseUrl = getBaseUrl();
+async function fetchArticleBodyFromPage(slug: string, subdomain?: string): Promise<string> {
+  const baseUrl = resolveBaseUrl(subdomain);
   const headers = getCookieHeaders();
   const res = await fetch(`${baseUrl}/p/${slug}`, {
     headers: {
@@ -116,8 +124,9 @@ export async function listArticles(options: {
   offset?: number;
   sort?: "new" | "top";
   search?: string;
+  subdomain?: string;
 }): Promise<SubstackArticle[]> {
-  const { limit = 12, offset = 0, sort = "new", search = "" } = options;
+  const { limit = 12, offset = 0, sort = "new", search = "", subdomain } = options;
 
   const params = new URLSearchParams({
     sort,
@@ -126,7 +135,7 @@ export async function listArticles(options: {
     limit: String(limit),
   });
 
-  const data = (await apiGet(`/api/v1/archive?${params}`)) as Record<
+  const data = (await apiGet(`/api/v1/archive?${params}`, subdomain)) as Record<
     string,
     unknown
   >[];
@@ -135,9 +144,10 @@ export async function listArticles(options: {
 }
 
 export async function getArticle(
-  slugOrId: string
+  slugOrId: string,
+  subdomain?: string
 ): Promise<SubstackArticleFull> {
-  const raw = (await apiGet(`/api/v1/posts/${slugOrId}`)) as Record<
+  const raw = (await apiGet(`/api/v1/posts/${slugOrId}`, subdomain)) as Record<
     string,
     unknown
   >;
@@ -153,7 +163,7 @@ export async function getArticle(
     (truncatedBodyText != null && truncatedBodyText.length > 0) ||
     (wordCount != null && wordCount > 200 && bodyHtml.length < wordCount * 5);
   if (isPaid && likelyTruncated) {
-    const fromPage = await fetchArticleBodyFromPage(slug);
+    const fromPage = await fetchArticleBodyFromPage(slug, subdomain);
     if (fromPage.length > bodyHtml.length) bodyHtml = fromPage;
   }
 
@@ -166,7 +176,59 @@ export async function getArticle(
 
 export async function searchArticles(
   query: string,
-  limit: number = 12
+  limit: number = 12,
+  subdomain?: string
 ): Promise<SubstackArticle[]> {
-  return listArticles({ search: query, limit, sort: "new" });
+  return listArticles({ search: query, limit, sort: "new", subdomain });
+}
+
+// ─── Comments ───────────────────────────────────────────────────
+
+export interface SubstackComment {
+  id: number;
+  body: string;
+  name: string;
+  date: string;
+  editedAt?: string;
+  reactions: Record<string, number>;
+  children: SubstackComment[];
+}
+
+function normalizeComment(raw: Record<string, unknown>): SubstackComment {
+  const childrenRaw = (raw["children"] ?? raw["childComments"] ?? []) as Record<string, unknown>[];
+  return {
+    id: raw["id"] as number,
+    body: (raw["body"] as string) || "",
+    name: (raw["name"] as string) || "Anonymous",
+    date: (raw["date"] as string) || "",
+    editedAt: raw["edited_at"] as string | undefined,
+    reactions: (raw["reactions"] as Record<string, number>) || {},
+    children: Array.isArray(childrenRaw) ? childrenRaw.map(normalizeComment) : [],
+  };
+}
+
+/**
+ * Fetch full comment tree for an article.
+ * The slug is resolved to a post ID first via the article detail endpoint.
+ */
+export async function getComments(
+  slugOrId: string,
+  subdomain?: string
+): Promise<{ postId: number; comments: SubstackComment[] }> {
+  // Resolve slug → post ID
+  const raw = (await apiGet(`/api/v1/posts/${slugOrId}`, subdomain)) as Record<string, unknown>;
+  const postId = raw["id"] as number;
+  if (!postId) throw new Error(`Could not resolve post ID for "${slugOrId}"`);
+
+  const params = new URLSearchParams({
+    all_comments: "true",
+    sort: "best_first",
+  });
+  const data = (await apiGet(`/api/v1/post/${postId}/comments?${params}`, subdomain)) as Record<string, unknown>;
+  const commentsRaw = (data["comments"] ?? []) as Record<string, unknown>[];
+
+  return {
+    postId,
+    comments: commentsRaw.map(normalizeComment),
+  };
 }

@@ -1,0 +1,56 @@
+{
+  "manifest_version": "0.3",
+  "name": "substack-article-mcp",
+  "display_name": "Substack Articles",
+  "version": "0.5.1",
+  "description": "Access your Substack articles, comments, and engagement data — including paid/premium content.",
+  "long_description": "Read articles from any Substack newsletter you subscribe to, directly from Claude. Get full article content (including paywalled posts), comment threads, engagement metrics, and search across publications.\n\n**Setup:** After installing, run `npx -y substack-article-mcp login` once in your terminal to authenticate with Substack. This opens a Chrome window where you log in — your main Chrome stays untouched.\n\n**Tools included:**\n- **list_articles** — Browse recent articles from any newsletter\n- **get_article** — Full article content as markdown (premium included)\n- **get_comments** — Complete comment tree with replies and reactions\n- **search_articles** — Search by keyword across any publication",
+  "author": {
+    "name": "Jenny Ouyang",
+    "url": "https://buildtolaunch.substack.com"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jenny-ouyang/substack-article-mcp.git"
+  },
+  "homepage": "https://www.npmjs.com/package/substack-article-mcp",
+  "support": "https://github.com/jenny-ouyang/substack-article-mcp/issues",
+  "license": "MIT",
+  "keywords": ["substack", "articles", "newsletter", "comments", "engagement"],
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/dist/index.js"]
+    }
+  },
+  "tools": [
+    {
+      "name": "substack_auth_status",
+      "description": "Check if Substack authentication is valid and show cookie age"
+    },
+    {
+      "name": "list_articles",
+      "description": "List published articles with metadata, engagement stats, and paid/free status"
+    },
+    {
+      "name": "get_article",
+      "description": "Get full article content as markdown, including premium/paywalled content"
+    },
+    {
+      "name": "search_articles",
+      "description": "Search articles by keyword across any newsletter"
+    },
+    {
+      "name": "get_comments",
+      "description": "Get full comment tree with author names, replies, and reaction counts"
+    }
+  ],
+  "compatibility": {
+    "platforms": ["darwin", "win32", "linux"],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

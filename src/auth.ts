@@ -116,10 +116,9 @@ export async function runLogin(): Promise<void> {
     process.exit(1);
   }
 
-  console.log("Launching Chrome for Substack login...");
-  console.log(`Chrome: ${chromePath}`);
+  console.log("Opening a Chrome window for Substack login...");
+  console.log("(This is a separate window — your main Chrome stays open and unaffected.)\n");
 
-  // Dynamic import to avoid loading puppeteer when running the MCP server
   const puppeteer = await import("puppeteer-core");
 
   getAuthDir();
@@ -139,56 +138,70 @@ export async function runLogin(): Promise<void> {
   const pages = await browser.pages();
   const page = pages[0] || (await browser.newPage());
 
+  // Clear any stale Substack cookies from a previous login session
+  // so we don't accidentally grab an old cookie and close immediately.
+  try {
+    const client = await page.createCDPSession();
+    const existing = (await client.send("Network.getAllCookies")) as {
+      cookies: Array<{ name: string; value: string; domain: string }>;
+    };
+    for (const c of existing.cookies) {
+      if (c.name === "substack.sid" || c.name === "substack.lli") {
+        await (client as unknown as { send(method: string, params: unknown): Promise<void> })
+          .send("Network.deleteCookies", { name: c.name, domain: c.domain });
+      }
+    }
+    await client.detach();
+  } catch {
+    // Non-critical — the URL-based check in waitForSubstackCookies is our safety net
+  }
+
   await page.goto("https://substack.com/sign-in", {
     waitUntil: "networkidle2",
   });
 
-  console.log("\n┌─────────────────────────────────────────────┐");
-  console.log("│  Log in to Substack in the browser window.  │");
-  console.log("│  The window will close automatically once    │");
-  console.log("│  your session cookie is detected.            │");
-  console.log("└─────────────────────────────────────────────┘\n");
+  console.log("┌─────────────────────────────────────────────────┐");
+  console.log("│  A Chrome window just opened.                   │");
+  console.log("│                                                  │");
+  console.log("│  1. Enter your email and password to log in.    │");
+  console.log("│  2. The window closes automatically when done.  │");
+  console.log("│                                                  │");
+  console.log("│  Waiting for you to finish logging in...        │");
+  console.log("└─────────────────────────────────────────────────┘\n");
 
   const cookies = await waitForSubstackCookies(page, 300_000);
 
   if (!cookies) {
-    console.error("Timed out waiting for login. Please try again.");
+    console.error("Timed out waiting for login (5 minutes). Please try again.");
     await browser.close();
     process.exit(1);
   }
 
+  console.log("Login detected! Extracting account info...");
+
+  // Try to detect the user's own publication subdomain (best-effort, not required)
   let subdomain = await detectSubdomainFromPage(page as unknown as PageLike);
   await browser.close();
 
   if (!subdomain) {
     subdomain = await detectSubdomainFromApi(cookies.sid);
   }
-  if (!subdomain && process.stdin.isTTY) {
-    subdomain = await promptSubdomain();
-  }
 
   saveAuth(cookies.sid, subdomain ?? undefined, cookies.lli ?? undefined);
 
+  console.log("\n✅ Authenticated successfully!");
+  console.log(`   Saved to ${AUTH_FILE}`);
+  if (cookies.lli) {
+    console.log("   substack.lli captured (paid/subscriber content available)");
+  }
   if (subdomain) {
-    console.log(`Newsletter: ${subdomain}.substack.com`);
-  }
-
-  console.log("Validating...");
-  const valid = await validateStoredAuth();
-
-  if (valid) {
-    console.log("\n✅ Authenticated successfully!");
-    console.log(`   Saved to ${AUTH_FILE}`);
-    if (subdomain) {
-      console.log(`   Subdomain: ${subdomain} (no need to set SUBSTACK_SUBDOMAIN)`);
-    }
-    console.log("\nYou can now use the Substack Article MCP in Cursor, Claude Code, or Claude Desktop.");
-    await offerToAddMcp();
+    console.log(`   Default newsletter: ${subdomain}.substack.com`);
+    console.log("   (You can also read articles from any other Substack by specifying a subdomain.)");
   } else {
-    console.error(
-      "\n⚠️  Cookie was saved but validation failed. You may need to try again."
-    );
+    console.log("   No default newsletter detected — specify a subdomain when listing or reading articles.");
   }
+  console.log("\nYou can now use the Substack Article MCP in Cursor, Claude Code, or Claude Desktop.");
+  await offerToAddMcp();
 }
 
 type PageLike = {
@@ -273,18 +286,6 @@ async function detectSubdomainFromApi(sid: string): Promise<string | null> {
   return null;
 }
 
-async function promptSubdomain(): Promise<string | null> {
-  const readline = await import("node:readline");
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve) => {
-    rl.question("\nWe couldn't detect your newsletter. Enter your subdomain (e.g. buildtolaunch): ", (answer) => {
-      rl.close();
-      const sub = (answer || "").trim().toLowerCase().replace(/\.substack\.com$/i, "").replace(/^https?:\/\//, "");
-      resolve(sub ? sub : null);
-    });
-  });
-}
-
 async function offerToAddMcp(): Promise<void> {
   if (!process.stdin.isTTY) return;
 
@@ -312,9 +313,12 @@ async function offerToAddMcp(): Promise<void> {
   }
 }
 
-/** Returns sid and, if present, the real substack.lli JWT (needed for full paid-article content from API). */
+/** Returns sid and lli only after user has left the sign-in page (avoids grabbing a stale cookie from the same profile). */
 async function waitForSubstackCookies(
-  page: { createCDPSession(): Promise<{ send(method: string): Promise<unknown>; detach(): Promise<void> }> },
+  page: {
+    createCDPSession(): Promise<{ send(method: string): Promise<unknown>; detach(): Promise<void> }>;
+    url(): string | Promise<string>;
+  },
   timeoutMs: number
 ): Promise<{ sid: string; lli: string | null } | null> {
   const start = Date.now();
@@ -330,7 +334,11 @@ async function waitForSubstackCookies(
       const sid = result.cookies.find((c) => c.name === "substack.sid")?.value;
       const lli = result.cookies.find((c) => c.name === "substack.lli")?.value ?? null;
       if (sid && sid.length > 0) {
-        return { sid, lli: lli && lli.length > 10 ? lli : null };
+        const url = await Promise.resolve(page.url());
+        const stillOnSignIn = /sign-in/.test(url);
+        if (!stillOnSignIn) {
+          return { sid, lli: lli && lli.length > 10 ? lli : null };
+        }
       }
     } catch {
       // Page may have navigated or CDP session failed — retry
@@ -385,17 +393,22 @@ export async function runManualLogin(cookieArg: string): Promise<void> {
 export async function validateStoredAuth(): Promise<boolean> {
   try {
     const headers = getCookieHeaders();
-    const subdomain =
-      loadAuth()?.subdomain ||
-      process.env["SUBSTACK_SUBDOMAIN"] ||
-      "substack";
-
+    // Validate against substack.com itself — works regardless of whether we know the user's subdomain
     const res = await fetch(
-      `https://${subdomain}.substack.com/api/v1/archive?limit=1`,
-      { headers }
+      "https://substack.com/api/v1/reader/posts?limit=1",
+      { headers, redirect: "follow" }
     );
-
-    return res.ok;
+    if (res.ok) return true;
+    // Fallback: if we have a subdomain, try the publication-specific endpoint
+    const subdomain = loadAuth()?.subdomain || process.env["SUBSTACK_SUBDOMAIN"];
+    if (subdomain) {
+      const res2 = await fetch(
+        `https://${subdomain}.substack.com/api/v1/archive?limit=1`,
+        { headers }
+      );
+      return res2.ok;
+    }
+    return false;
   } catch {
     return false;
   }

@@ -6,7 +6,9 @@ import {
   listArticles,
   getArticle,
   searchArticles,
+  getComments,
   type SubstackArticle,
+  type SubstackComment,
 } from "./client.js";
 import { htmlToMarkdown } from "./html-to-md.js";
 
@@ -71,7 +73,7 @@ server.tool(
 
 server.tool(
   "list_articles",
-  "List published Substack articles with metadata (title, date, slug, engagement stats, paid/free status). Returns newest first by default.",
+  "List published Substack articles with metadata (title, date, slug, engagement stats, paid/free status). Returns newest first by default. Works with any Substack newsletter — defaults to your own, or specify a subdomain to read another.",
   {
     limit: z
       .number()
@@ -90,13 +92,18 @@ server.tool(
       .enum(["new", "top"])
       .optional()
       .describe("Sort order: 'new' (default) or 'top' by engagement"),
+    subdomain: z
+      .string()
+      .optional()
+      .describe("Substack subdomain to query (e.g. 'platformer', 'stratechery'). Defaults to your own newsletter."),
   },
-  async ({ limit, offset, sort }) => {
+  async ({ limit, offset, sort, subdomain }) => {
     try {
       const articles = await listArticles({
         limit: limit ?? 12,
         offset: offset ?? 0,
         sort: sort ?? "new",
+        subdomain,
       });
 
       const total = articles.length;
@@ -120,17 +127,21 @@ server.tool(
 
 server.tool(
   "get_article",
-  "Get full content of a Substack article as markdown. Requires the article slug (the URL path segment after /p/). Authenticated access includes premium/paywalled content.",
+  "Get full content of a Substack article as markdown. Requires the article slug (the URL path segment after /p/). Authenticated access includes premium/paywalled content if you're a subscriber.",
   {
     slug: z
       .string()
       .describe(
         "Article slug from the URL (the part after /p/ in the article URL, e.g. 'my-article-title')"
       ),
+    subdomain: z
+      .string()
+      .optional()
+      .describe("Substack subdomain (e.g. 'platformer'). Defaults to your own newsletter. Needed when reading someone else's articles."),
   },
-  async ({ slug }) => {
+  async ({ slug, subdomain }) => {
     try {
-      const article = await getArticle(slug);
+      const article = await getArticle(slug, subdomain);
 
       const paid = article.audience === "only_paid" ? " [PAID]" : "";
       const date = article.postDate
@@ -155,7 +166,7 @@ server.tool(
       } else if (article.truncatedBodyText) {
         markdown +=
           article.truncatedBodyText +
-          "\n\n[Content truncated — authentication may have failed for this premium article]";
+          "\n\n[Content truncated — you may not be subscribed to this newsletter's paid tier]";
       } else {
         markdown += "(No article content available)";
       }
@@ -178,7 +189,7 @@ server.tool(
 
 server.tool(
   "search_articles",
-  "Search your published Substack articles by keyword. Returns matching articles with metadata.",
+  "Search Substack articles by keyword. Returns matching articles with metadata. Works with any newsletter — defaults to your own, or specify a subdomain.",
   {
     query: z.string().describe("Search query to find articles"),
     limit: z
@@ -188,10 +199,14 @@ server.tool(
       .max(50)
       .optional()
       .describe("Max results to return (default 12)"),
+    subdomain: z
+      .string()
+      .optional()
+      .describe("Substack subdomain to search (e.g. 'platformer'). Defaults to your own newsletter."),
   },
-  async ({ query, limit }) => {
+  async ({ query, limit, subdomain }) => {
     try {
-      const articles = await searchArticles(query, limit ?? 12);
+      const articles = await searchArticles(query, limit ?? 12, subdomain);
       const total = articles.length;
 
       if (total === 0) {
@@ -206,6 +221,81 @@ server.tool(
       }
 
       const text = `Found ${total} article${total === 1 ? "" : "s"} matching "${query}":\n\n${formatArticleList(articles)}`;
+      return { content: [{ type: "text" as const, text }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// ─── Tool: get_comments ──────────────────────────────────────────
+
+function formatComment(c: SubstackComment, depth: number = 0): string {
+  const indent = "  ".repeat(depth);
+  const date = c.date
+    ? new Date(c.date).toLocaleDateString("en-US", {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+      })
+    : "";
+  const reactions = Object.entries(c.reactions)
+    .map(([emoji, count]) => `${emoji} ${count}`)
+    .join(" ");
+  const edited = c.editedAt ? " (edited)" : "";
+
+  let line = `${indent}**${c.name}** — ${date}${edited}`;
+  if (reactions) line += ` | ${reactions}`;
+  line += `\n${indent}${c.body}`;
+
+  const childLines = c.children.map((child) => formatComment(child, depth + 1));
+  if (childLines.length > 0) {
+    line += "\n" + childLines.join("\n\n");
+  }
+  return line;
+}
+
+server.tool(
+  "get_comments",
+  "Get all comments on a Substack article, including full text, author names, nested replies, and reaction counts. Returns the complete uncompressed comment tree.",
+  {
+    slug: z
+      .string()
+      .describe(
+        "Article slug from the URL (e.g. 'my-article-title')"
+      ),
+    subdomain: z
+      .string()
+      .optional()
+      .describe("Substack subdomain (e.g. 'platformer'). Defaults to your own newsletter."),
+  },
+  async ({ slug, subdomain }) => {
+    try {
+      const { comments } = await getComments(slug, subdomain);
+
+      if (comments.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "No comments on this article." }],
+        };
+      }
+
+      const total = comments.reduce(
+        function countAll(sum: number, c: SubstackComment): number {
+          return c.children.reduce(countAll, sum + 1);
+        },
+        0
+      );
+
+      const formatted = comments.map((c) => formatComment(c)).join("\n\n---\n\n");
+      const text = `${total} comment${total === 1 ? "" : "s"} (${comments.length} top-level):\n\n${formatted}`;
+
       return { content: [{ type: "text" as const, text }] };
     } catch (error) {
       return {
