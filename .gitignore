@@ -3,3 +3,7 @@ dist/
 *.tsbuildinfo
 .env
 *.mcpb
+BUILD_PLAN.md
+PUBLISH.md
+GUMROAD_PAGE.md
+GUMROAD_UPLOAD.md

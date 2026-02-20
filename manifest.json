@@ -4,7 +4,7 @@
   "display_name": "Substack Articles",
   "version": "0.5.1",
   "description": "Access your Substack articles, comments, and engagement data — including paid/premium content.",
-  "long_description": "Read articles from any Substack newsletter you subscribe to, directly from Claude. Get full article content (including paywalled posts), comment threads, engagement metrics, and search across publications.\n\n**Setup:** After installing, run `npx -y substack-article-mcp login` once in your terminal to authenticate with Substack. This opens a Chrome window where you log in — your main Chrome stays untouched.\n\n**Tools included:**\n- **list_articles** — Browse recent articles from any newsletter\n- **get_article** — Full article content as markdown (premium included)\n- **get_comments** — Complete comment tree with replies and reactions\n- **search_articles** — Search by keyword across any publication",
+  "long_description": "Read articles from any Substack newsletter you subscribe to, directly from Claude. Get full article content (including paywalled posts), comment threads, engagement metrics, your reader feed, and a list of all your subscriptions.\n\n**Setup:** After installing, run `npx -y substack-article-mcp login` once in your terminal to authenticate with Substack. This opens a Chrome window where you log in — your main Chrome stays untouched.\n\n**Tools included:**\n- **list_articles** — Browse recent articles from any newsletter\n- **get_article** — Full article content by slug or numeric ID (premium included)\n- **get_comments** — Complete comment tree with replies and reactions\n- **search_articles** — Search by keyword across any publication\n- **list_subscriptions** — See all newsletters you subscribe to\n- **get_feed** — Your personalized reader feed from subscribed newsletters",
   "author": {
     "name": "Jenny Ouyang",
     "url": "https://buildtolaunch.substack.com"
@@ -36,7 +36,7 @@
     },
     {
       "name": "get_article",
-      "description": "Get full article content as markdown, including premium/paywalled content"
+      "description": "Get full article content by slug or numeric post ID, including premium/paywalled content"
     },
     {
       "name": "search_articles",
@@ -45,6 +45,14 @@
     {
       "name": "get_comments",
       "description": "Get full comment tree with author names, replies, and reaction counts"
+    },
+    {
+      "name": "list_subscriptions",
+      "description": "List all Substack newsletters you subscribe to with name, subdomain, and membership type"
+    },
+    {
+      "name": "get_feed",
+      "description": "Your personalized reader feed — recent posts from newsletters you subscribe to"
     }
   ],
   "compatibility": {

@@ -7,8 +7,12 @@ import {
   getArticle,
   searchArticles,
   getComments,
+  listSubscriptions,
+  getReaderFeed,
   type SubstackArticle,
   type SubstackComment,
+  type SubstackSubscription,
+  type FeedItem,
 } from "./client.js";
 import { htmlToMarkdown } from "./html-to-md.js";
 
@@ -127,17 +131,17 @@ server.tool(
 
 server.tool(
   "get_article",
-  "Get full content of a Substack article as markdown. Requires the article slug (the URL path segment after /p/). Authenticated access includes premium/paywalled content if you're a subscriber.",
+  "Get full content of a Substack article as markdown. Accepts an article slug (e.g. 'my-article-title') OR a numeric post ID (e.g. '184929446'). When using a numeric ID, subdomain is auto-detected. Authenticated access includes premium/paywalled content if you're a subscriber.",
   {
     slug: z
       .string()
       .describe(
-        "Article slug from the URL (the part after /p/ in the article URL, e.g. 'my-article-title')"
+        "Article slug (e.g. 'my-article-title') or numeric post ID (e.g. '184929446')"
       ),
     subdomain: z
       .string()
       .optional()
-      .describe("Substack subdomain (e.g. 'platformer'). Defaults to your own newsletter. Needed when reading someone else's articles."),
+      .describe("Substack subdomain (e.g. 'platformer'). Auto-detected when using numeric IDs. Needed when reading someone else's articles by slug."),
   },
   async ({ slug, subdomain }) => {
     try {
@@ -297,6 +301,138 @@ server.tool(
       const text = `${total} comment${total === 1 ? "" : "s"} (${comments.length} top-level):\n\n${formatted}`;
 
       return { content: [{ type: "text" as const, text }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// ─── Tool: list_subscriptions ────────────────────────────────────
+
+server.tool(
+  "list_subscriptions",
+  "List all Substack newsletters the authenticated user subscribes to. Returns name, subdomain, membership type (free/paid), and URL for each subscription.",
+  {},
+  async () => {
+    try {
+      const subs = await listSubscriptions();
+
+      if (subs.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "No subscriptions found." }],
+        };
+      }
+
+      const paid = subs.filter((s) => s.plan === "paid");
+      const comp = subs.filter((s) => s.plan === "comp");
+      const free = subs.filter((s) => s.plan === "free");
+
+      let text = `You subscribe to ${subs.length} newsletter${subs.length === 1 ? "" : "s"}`;
+      const parts: string[] = [];
+      if (paid.length > 0) parts.push(`${paid.length} paid`);
+      if (comp.length > 0) parts.push(`${comp.length} comped`);
+      parts.push(`${free.length} free`);
+      text += ` (${parts.join(", ")}):\n\n`;
+
+      if (paid.length > 0) {
+        text += "**Paid subscriptions:**\n";
+        text += paid
+          .map((s) => `- **${s.name}** (${s.subdomain}) — ${s.url}`)
+          .join("\n");
+        text += "\n\n";
+      }
+
+      if (comp.length > 0) {
+        text += "**Comped subscriptions:**\n";
+        text += comp
+          .map((s) => `- **${s.name}** (${s.subdomain}) — ${s.url}`)
+          .join("\n");
+        text += "\n\n";
+      }
+
+      text += "**Free subscriptions:**\n";
+      text += free
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((s) => {
+          const fav = s.isFavorite ? " ★" : "";
+          return `- ${s.name}${fav} (${s.subdomain})`;
+        })
+        .join("\n");
+
+      return { content: [{ type: "text" as const, text }] };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// ─── Tool: get_feed ─────────────────────────────────────────────
+
+server.tool(
+  "get_feed",
+  "Get the authenticated user's personalized Substack reader feed — recent posts from newsletters they subscribe to. Shows title, author, publication, engagement stats, and slug for fetching full content.",
+  {
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(50)
+      .optional()
+      .describe("Number of feed items to return (default 20, max 50)"),
+  },
+  async ({ limit }) => {
+    try {
+      const feed = await getReaderFeed(limit ?? 20);
+
+      if (feed.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "Your reader feed is empty." }],
+        };
+      }
+
+      const text = feed
+        .map((item, i) => {
+          const paid = item.audience === "only_paid" ? " [PAID]" : "";
+          const date = item.publishedAt
+            ? new Date(item.publishedAt).toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+              })
+            : "";
+          const stats = `${item.likes} likes, ${item.comments} comments`;
+
+          return [
+            `${i + 1}. **${item.title}**${paid}`,
+            `   By ${item.authorName} in **${item.publicationName}** (${item.publicationSubdomain})`,
+            `   ${date} | ${stats}`,
+            `   Slug: ${item.slug} | URL: ${item.canonicalUrl}`,
+          ].join("\n");
+        })
+        .join("\n\n");
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Your reader feed (${feed.length} posts):\n\n${text}`,
+          },
+        ],
+      };
     } catch (error) {
       return {
         content: [

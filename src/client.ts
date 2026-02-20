@@ -143,14 +143,52 @@ export async function listArticles(options: {
   return data.map(normalizePost);
 }
 
+/**
+ * Detect whether the input looks like a numeric post ID (e.g. "184929446")
+ * rather than a text slug (e.g. "my-article-title").
+ */
+function isNumericId(slugOrId: string): boolean {
+  return /^\d+$/.test(slugOrId);
+}
+
+/**
+ * Fetch a post by its numeric ID using the global by-id endpoint.
+ * Returns the post data and the publication subdomain (useful when no subdomain was provided).
+ */
+async function fetchPostById(id: string): Promise<{ post: Record<string, unknown>; subdomain?: string }> {
+  const headers = getCookieHeaders();
+  const res = await fetch(`https://substack.com/api/v1/posts/by-id/${id}`, {
+    headers: { ...headers, Accept: "application/json" },
+  });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Authentication failed. Run `substack-article-mcp login` to re-authenticate.");
+  }
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Substack API error ${res.status}: ${text}`);
+  }
+
+  const json = (await res.json()) as Record<string, unknown>;
+  const post = json["post"] as Record<string, unknown>;
+  const pub = json["publication"] as Record<string, unknown> | undefined;
+  return { post, subdomain: pub?.["subdomain"] as string | undefined };
+}
+
 export async function getArticle(
   slugOrId: string,
   subdomain?: string
 ): Promise<SubstackArticleFull> {
-  const raw = (await apiGet(`/api/v1/posts/${slugOrId}`, subdomain)) as Record<
-    string,
-    unknown
-  >;
+  let raw: Record<string, unknown>;
+  let resolvedSubdomain = subdomain;
+
+  if (isNumericId(slugOrId)) {
+    const result = await fetchPostById(slugOrId);
+    raw = result.post;
+    if (!resolvedSubdomain) resolvedSubdomain = result.subdomain;
+  } else {
+    raw = (await apiGet(`/api/v1/posts/${slugOrId}`, subdomain)) as Record<string, unknown>;
+  }
 
   let bodyHtml = (raw["body_html"] as string) || "";
   const truncatedBodyText = raw["truncated_body_text"] as string | undefined;
@@ -163,7 +201,7 @@ export async function getArticle(
     (truncatedBodyText != null && truncatedBodyText.length > 0) ||
     (wordCount != null && wordCount > 200 && bodyHtml.length < wordCount * 5);
   if (isPaid && likelyTruncated) {
-    const fromPage = await fetchArticleBodyFromPage(slug, subdomain);
+    const fromPage = await fetchArticleBodyFromPage(slug, resolvedSubdomain);
     if (fromPage.length > bodyHtml.length) bodyHtml = fromPage;
   }
 
@@ -215,20 +253,152 @@ export async function getComments(
   slugOrId: string,
   subdomain?: string
 ): Promise<{ postId: number; comments: SubstackComment[] }> {
-  // Resolve slug → post ID
-  const raw = (await apiGet(`/api/v1/posts/${slugOrId}`, subdomain)) as Record<string, unknown>;
-  const postId = raw["id"] as number;
-  if (!postId) throw new Error(`Could not resolve post ID for "${slugOrId}"`);
+  let postId: number;
+  let resolvedSubdomain = subdomain;
+
+  if (isNumericId(slugOrId)) {
+    postId = Number(slugOrId);
+    if (!resolvedSubdomain) {
+      const result = await fetchPostById(slugOrId);
+      resolvedSubdomain = result.subdomain;
+    }
+  } else {
+    const raw = (await apiGet(`/api/v1/posts/${slugOrId}`, subdomain)) as Record<string, unknown>;
+    postId = raw["id"] as number;
+    if (!postId) throw new Error(`Could not resolve post ID for "${slugOrId}"`);
+  }
 
   const params = new URLSearchParams({
     all_comments: "true",
     sort: "best_first",
   });
-  const data = (await apiGet(`/api/v1/post/${postId}/comments?${params}`, subdomain)) as Record<string, unknown>;
+  const data = (await apiGet(`/api/v1/post/${postId}/comments?${params}`, resolvedSubdomain)) as Record<string, unknown>;
   const commentsRaw = (data["comments"] ?? []) as Record<string, unknown>[];
 
   return {
     postId,
     comments: commentsRaw.map(normalizeComment),
   };
+}
+
+// ─── Subscriptions ──────────────────────────────────────────────
+
+export interface SubstackSubscription {
+  publicationId: number;
+  name: string;
+  subdomain: string;
+  url: string;
+  authorName: string;
+  plan: "paid" | "comp" | "free";
+  isFavorite: boolean;
+  createdAt: string;
+}
+
+/**
+ * List all newsletters the authenticated user subscribes to.
+ * Uses /api/v1/subscriptions which returns subscriptions + publications as sibling arrays.
+ */
+export async function listSubscriptions(): Promise<SubstackSubscription[]> {
+  const headers = { ...getCookieHeaders(), Accept: "application/json" };
+  const res = await fetch("https://substack.com/api/v1/subscriptions?limit=500", { headers });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Authentication failed. Run `substack-article-mcp login` to re-authenticate.");
+  }
+  if (!res.ok) throw new Error(`Substack API error ${res.status}`);
+
+  const json = (await res.json()) as Record<string, unknown>;
+  const subs = (json["subscriptions"] || []) as Record<string, unknown>[];
+  const pubs = (json["publications"] || []) as Record<string, unknown>[];
+
+  const pubMap = new Map<number, Record<string, unknown>>();
+  for (const pub of pubs) {
+    pubMap.set(pub["id"] as number, pub);
+  }
+
+  return subs
+    .map((sub) => {
+      const pubId = sub["publication_id"] as number;
+      const pub = pubMap.get(pubId);
+      if (!pub) return null;
+      const hasPaid = !!(sub["first_payment_at"]);
+      const isComp = (sub["type"] as string) === "comp";
+      const plan: "paid" | "comp" | "free" = hasPaid ? "paid" : isComp ? "comp" : "free";
+
+      return {
+        publicationId: pubId,
+        name: (pub["name"] as string) || "",
+        subdomain: (pub["subdomain"] as string) || "",
+        url: (pub["base_url"] as string) || `https://${pub["subdomain"]}.substack.com`,
+        authorName: (pub["author_name"] as string) || "",
+        plan,
+        isFavorite: (sub["is_favorite"] as boolean) || false,
+        createdAt: (sub["created_at"] as string) || "",
+      };
+    })
+    .filter((s): s is SubstackSubscription => s !== null && s.subdomain !== "");
+}
+
+// ─── Reader Feed ────────────────────────────────────────────────
+
+export interface FeedItem {
+  id: number;
+  title: string;
+  slug: string;
+  subtitle: string;
+  publishedAt: string;
+  canonicalUrl: string;
+  audience: string;
+  publicationName: string;
+  publicationSubdomain: string;
+  authorName: string;
+  likes: number;
+  comments: number;
+  restacks: number;
+  wordCount?: number;
+}
+
+/**
+ * Fetch the authenticated user's personalized reader feed — recent posts from subscribed newsletters.
+ */
+export async function getReaderFeed(limit: number = 20): Promise<FeedItem[]> {
+  const headers = { ...getCookieHeaders(), Accept: "application/json" };
+  const res = await fetch(`https://substack.com/api/v1/reader/posts?limit=${limit}`, { headers });
+
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("Authentication failed. Run `substack-article-mcp login` to re-authenticate.");
+  }
+  if (!res.ok) throw new Error(`Substack API error ${res.status}`);
+
+  const json = (await res.json()) as Record<string, unknown>;
+  const posts = (json["posts"] || []) as Record<string, unknown>[];
+  const pubs = (json["publications"] || []) as Record<string, unknown>[];
+
+  const pubMap = new Map<number, Record<string, unknown>>();
+  for (const pub of pubs) {
+    pubMap.set(pub["id"] as number, pub);
+  }
+
+  return posts.map((post) => {
+    const pubId = post["publication_id"] as number;
+    const pub = pubMap.get(pubId);
+    const bylines = (post["publishedBylines"] || []) as Record<string, unknown>[];
+
+    return {
+      id: post["id"] as number,
+      title: (post["title"] as string) || "",
+      slug: (post["slug"] as string) || "",
+      subtitle: (post["subtitle"] as string) || "",
+      publishedAt: (post["post_date"] as string) || "",
+      canonicalUrl: (post["canonical_url"] as string) || "",
+      audience: (post["audience"] as string) || "everyone",
+      publicationName: (pub?.["name"] as string) || "",
+      publicationSubdomain: (pub?.["subdomain"] as string) || "",
+      authorName: (bylines[0]?.["name"] as string) || "",
+      likes: (post["reaction_count"] as number) || 0,
+      comments: (post["comment_count"] as number) || 0,
+      restacks: (post["restacks"] as number) || 0,
+      wordCount: post["wordcount"] as number | undefined,
+    };
+  });
 }
