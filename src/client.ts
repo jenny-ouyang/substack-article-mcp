@@ -339,6 +339,107 @@ export async function listSubscriptions(): Promise<SubstackSubscription[]> {
     .filter((s): s is SubstackSubscription => s !== null && s.subdomain !== "");
 }
 
+// ─── Inbox (chronological) ───────────────────────────────────────
+
+export interface InboxItem {
+  id: number;
+  title: string;
+  slug: string;
+  subtitle: string;
+  publishedAt: string;
+  canonicalUrl: string;
+  audience: string;
+  publicationName: string;
+  publicationSubdomain: string;
+  authorName: string;
+  likes: number;
+  comments: number;
+  restacks: number;
+  wordCount?: number;
+}
+
+/**
+ * Fetch the authenticated user's inbox — chronological list of posts from ALL subscribed newsletters.
+ * Unlike getReaderFeed (algorithmic), this returns everything in publish-time order with pagination.
+ *
+ * @param pages Number of pages to fetch (each page = up to 20 items). Default 1.
+ */
+export async function getInbox(pages: number = 1): Promise<InboxItem[]> {
+  const headers = { ...getCookieHeaders(), Accept: "application/json" };
+  const allItems: InboxItem[] = [];
+  let cursor: string | null = null;
+
+  for (let page = 0; page < pages; page++) {
+    const params = new URLSearchParams({
+      inboxType: "inbox",
+      surface: "inbox_all",
+      limit: "20",
+    });
+    if (cursor) params.set("cursor", cursor);
+
+    const res = await fetch(`https://substack.com/api/v1/inbox/top?${params}`, { headers });
+
+    if (res.status === 401 || res.status === 403) {
+      throw new Error("Authentication failed. Run `substack-article-mcp login` to re-authenticate.");
+    }
+    if (!res.ok) throw new Error(`Substack API error ${res.status}`);
+
+    const json = (await res.json()) as Record<string, unknown>;
+    const postItems = (json["post_items"] || json["posts"] || []) as Record<string, unknown>[];
+
+    // Build publication lookup from inline publication objects
+    const pubMap = new Map<number, Record<string, unknown>>();
+    const pubs = (json["publications"] || []) as Record<string, unknown>[];
+    for (const pub of pubs) {
+      pubMap.set(pub["id"] as number, pub);
+    }
+
+    for (const item of postItems) {
+      // inbox/top wraps posts in a container — the actual post may be nested under "post"
+      const post = (item["post"] || item) as Record<string, unknown>;
+      const pubId = post["publication_id"] as number;
+      // Try inline publication first, then the top-level publications array
+      let pub = post["publishedBylines"]
+        ? undefined
+        : (post["publication"] as Record<string, unknown> | undefined);
+      if (!pub) pub = pubMap.get(pubId);
+
+      const bylines = (post["publishedBylines"] || []) as Record<string, unknown>[];
+
+      allItems.push({
+        id: post["id"] as number,
+        title: (post["title"] as string) || "",
+        slug: (post["slug"] as string) || "",
+        subtitle: (post["subtitle"] as string) || "",
+        publishedAt: (post["post_date"] as string) || "",
+        canonicalUrl: (post["canonical_url"] as string) || "",
+        audience: (post["audience"] as string) || "everyone",
+        publicationName: (pub?.["name"] as string) || "",
+        publicationSubdomain: (pub?.["subdomain"] as string) || "",
+        authorName: (bylines[0]?.["name"] as string) || (pub?.["author_name"] as string) || "",
+        likes: (post["reaction_count"] as number) || 0,
+        comments: (post["comment_count"] as number) || 0,
+        restacks: (post["restacks"] as number) || 0,
+        wordCount: post["wordcount"] as number | undefined,
+      });
+    }
+
+    // Get next cursor for pagination
+    const nextCursor = json["cursor"] as string | undefined;
+    if (!nextCursor || postItems.length === 0) break; // No more pages
+    cursor = nextCursor;
+  }
+
+  // Sort by publish date, newest first
+  allItems.sort((a, b) => {
+    const dateA = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+    const dateB = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+    return dateB - dateA;
+  });
+
+  return allItems;
+}
+
 // ─── Reader Feed ────────────────────────────────────────────────
 
 export interface FeedItem {
@@ -362,8 +463,10 @@ export interface FeedItem {
  * Fetch the authenticated user's personalized reader feed — recent posts from subscribed newsletters.
  */
 export async function getReaderFeed(limit: number = 20): Promise<FeedItem[]> {
+  // Substack caps the reader feed at 20 items per request
+  const apiLimit = Math.min(limit, 20);
   const headers = { ...getCookieHeaders(), Accept: "application/json" };
-  const res = await fetch(`https://substack.com/api/v1/reader/posts?limit=${limit}`, { headers });
+  const res = await fetch(`https://substack.com/api/v1/reader/posts?limit=${apiLimit}`, { headers });
 
   if (res.status === 401 || res.status === 403) {
     throw new Error("Authentication failed. Run `substack-article-mcp login` to re-authenticate.");
@@ -379,7 +482,7 @@ export async function getReaderFeed(limit: number = 20): Promise<FeedItem[]> {
     pubMap.set(pub["id"] as number, pub);
   }
 
-  return posts.map((post) => {
+  const items = posts.map((post) => {
     const pubId = post["publication_id"] as number;
     const pub = pubMap.get(pubId);
     const bylines = (post["publishedBylines"] || []) as Record<string, unknown>[];
@@ -401,4 +504,13 @@ export async function getReaderFeed(limit: number = 20): Promise<FeedItem[]> {
       wordCount: post["wordcount"] as number | undefined,
     };
   });
+
+  // Sort by publish date, newest first
+  items.sort((a, b) => {
+    const dateA = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
+    const dateB = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
+    return dateB - dateA;
+  });
+
+  return items;
 }

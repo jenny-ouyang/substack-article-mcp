@@ -9,10 +9,12 @@ import {
   getComments,
   listSubscriptions,
   getReaderFeed,
+  getInbox,
   type SubstackArticle,
   type SubstackComment,
   type SubstackSubscription,
   type FeedItem,
+  type InboxItem,
 } from "./client.js";
 import { htmlToMarkdown } from "./html-to-md.js";
 
@@ -390,9 +392,9 @@ server.tool(
       .number()
       .int()
       .min(1)
-      .max(50)
+      .max(20)
       .optional()
-      .describe("Number of feed items to return (default 20, max 50)"),
+      .describe("Number of feed items to return (default 20, max 20). Results are sorted newest first."),
   },
   async ({ limit }) => {
     try {
@@ -430,6 +432,74 @@ server.tool(
           {
             type: "text" as const,
             text: `Your reader feed (${feed.length} posts):\n\n${text}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+      };
+    }
+  }
+);
+
+// ─── Tool: get_inbox ─────────────────────────────────────────────
+
+server.tool(
+  "get_inbox",
+  "Get the authenticated user's inbox — a chronological list of ALL recent posts from every subscribed newsletter. Unlike get_feed (algorithmic, max 20), this returns posts in publish-time order and supports pagination to fetch more. Use 'pages' to control how far back to look (each page = ~20 posts).",
+  {
+    pages: z
+      .number()
+      .int()
+      .min(1)
+      .max(10)
+      .optional()
+      .describe("Number of pages to fetch (each page ~20 posts). Default 1. Use 3-5 for broader coverage."),
+  },
+  async ({ pages }) => {
+    try {
+      const items = await getInbox(pages ?? 1);
+
+      if (items.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "Your inbox is empty." }],
+        };
+      }
+
+      const text = items
+        .map((item, i) => {
+          const paid = item.audience === "only_paid" ? " [PAID]" : "";
+          const date = item.publishedAt
+            ? new Date(item.publishedAt).toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "short",
+                day: "numeric",
+                hour: "2-digit",
+                minute: "2-digit",
+              })
+            : "";
+          const stats = `${item.likes} likes, ${item.comments} comments`;
+
+          return [
+            `${i + 1}. **${item.title}**${paid}`,
+            `   By ${item.authorName} in **${item.publicationName}** (${item.publicationSubdomain})`,
+            `   ${date} | ${stats}`,
+            `   Slug: ${item.slug} | URL: ${item.canonicalUrl}`,
+          ].join("\n");
+        })
+        .join("\n\n");
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Inbox (${items.length} posts, ${pages ?? 1} page${(pages ?? 1) > 1 ? "s" : ""}):\n\n${text}`,
           },
         ],
       };
