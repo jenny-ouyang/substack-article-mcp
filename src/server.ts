@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { checkAuthStatus } from "./auth.js";
+import { checkAuthStatus, getAuthGuidance, isAuthenticated } from "./auth.js";
 import {
   listArticles,
   getArticle,
@@ -12,11 +15,19 @@ import {
   getInbox,
   type SubstackArticle,
   type SubstackComment,
-  type SubstackSubscription,
-  type FeedItem,
-  type InboxItem,
 } from "./client.js";
 import { htmlToMarkdown } from "./html-to-md.js";
+
+function getPackageVersion(): string {
+  try {
+    const dir = dirname(fileURLToPath(import.meta.url));
+    const pkgPath = join(dir, "..", "package.json");
+    const pkg = JSON.parse(readFileSync(pkgPath, "utf-8")) as { version: string };
+    return pkg.version;
+  } catch {
+    return "0.7.0";
+  }
+}
 
 function formatArticleList(articles: SubstackArticle[]): string {
   if (articles.length === 0) return "No articles found.";
@@ -41,37 +52,34 @@ function formatArticleList(articles: SubstackArticle[]): string {
 
 const server = new McpServer({
   name: "substack-article-mcp",
-  version: "0.1.0",
+  version: getPackageVersion(),
 });
 
 // ─── Tool: substack_auth_status ──────────────────────────────────
 
 server.tool(
   "substack_auth_status",
-  "Check if the Substack authentication is valid and show cookie age",
+  "Check if the Substack authentication is valid, show cookie age, and get guidance for refreshing credentials",
   {},
   async () => {
     const status = await checkAuthStatus();
 
     if (!status.authenticated) {
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: "Not authenticated. Run `substack-article-mcp login` in your terminal to connect your Substack account.",
-          },
-        ],
-      };
+      const hasAuth = isAuthenticated();
+      let text = "Not authenticated.\n\n";
+      if (hasAuth) {
+        text += "A cookie is present but appears to be expired or invalid.\n\n";
+      }
+      text += `To authenticate: ${getAuthGuidance()}`;
+      return { content: [{ type: "text" as const, text }] };
     }
 
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: `Authenticated ✓\nCookie age: ${status.cookieAge}\nSubdomain: ${status.subdomain || process.env["SUBSTACK_SUBDOMAIN"] || "(not set)"}`,
-        },
-      ],
-    };
+    let text = "Authenticated ✓\n";
+    text += `Source: ${status.authSource || "unknown"}\n`;
+    text += `Cookie age: ${status.cookieAge}\n`;
+    text += `Subdomain: ${status.subdomain || process.env["SUBSTACK_SUBDOMAIN"] || "(not set)"}`;
+
+    return { content: [{ type: "text" as const, text }] };
   }
 );
 
@@ -79,7 +87,7 @@ server.tool(
 
 server.tool(
   "list_articles",
-  "List published Substack articles with metadata (title, date, slug, engagement stats, paid/free status). Returns newest first by default. Works with any Substack newsletter — defaults to your own, or specify a subdomain to read another.",
+  "List published Substack articles with metadata (title, date, slug, engagement stats, paid/free status). Returns newest first by default. Works with any Substack newsletter — specify a subdomain, or uses your default when authenticated.",
   {
     limit: z
       .number()
@@ -101,7 +109,7 @@ server.tool(
     subdomain: z
       .string()
       .optional()
-      .describe("Substack subdomain to query (e.g. 'platformer', 'stratechery'). Defaults to your own newsletter."),
+      .describe("Substack subdomain to query (e.g. 'platformer', 'stratechery'). Required if not authenticated."),
   },
   async ({ limit, offset, sort, subdomain }) => {
     try {
@@ -133,7 +141,7 @@ server.tool(
 
 server.tool(
   "get_article",
-  "Get full content of a Substack article as markdown. Accepts an article slug (e.g. 'my-article-title') OR a numeric post ID (e.g. '184929446'). When using a numeric ID, subdomain is auto-detected. Authenticated access includes premium/paywalled content if you're a subscriber.",
+  "Get full content of a Substack article as markdown. Accepts an article slug (e.g. 'my-article-title') OR a numeric post ID (e.g. '184929446'). When using a numeric ID, subdomain is auto-detected. Works without auth for public articles; authenticated access includes premium/paywalled content.",
   {
     slug: z
       .string()
@@ -143,7 +151,7 @@ server.tool(
     subdomain: z
       .string()
       .optional()
-      .describe("Substack subdomain (e.g. 'platformer'). Auto-detected when using numeric IDs. Needed when reading someone else's articles by slug."),
+      .describe("Substack subdomain (e.g. 'platformer'). Auto-detected when using numeric IDs."),
   },
   async ({ slug, subdomain }) => {
     try {
@@ -172,7 +180,7 @@ server.tool(
       } else if (article.truncatedBodyText) {
         markdown +=
           article.truncatedBodyText +
-          "\n\n[Content truncated — you may not be subscribed to this newsletter's paid tier]";
+          "\n\n[Content truncated — this is a paid article. Log in to access the full content.]";
       } else {
         markdown += "(No article content available)";
       }
@@ -195,7 +203,7 @@ server.tool(
 
 server.tool(
   "search_articles",
-  "Search Substack articles by keyword. Returns matching articles with metadata. Works with any newsletter — defaults to your own, or specify a subdomain.",
+  "Search Substack articles by keyword. Returns matching articles with metadata. Works with any newsletter — specify a subdomain, or uses your default when authenticated.",
   {
     query: z.string().describe("Search query to find articles"),
     limit: z
@@ -208,7 +216,7 @@ server.tool(
     subdomain: z
       .string()
       .optional()
-      .describe("Substack subdomain to search (e.g. 'platformer'). Defaults to your own newsletter."),
+      .describe("Substack subdomain to search (e.g. 'platformer'). Required if not authenticated."),
   },
   async ({ query, limit, subdomain }) => {
     try {
@@ -275,12 +283,12 @@ server.tool(
     slug: z
       .string()
       .describe(
-        "Article slug from the URL (e.g. 'my-article-title')"
+        "Article slug from the URL (e.g. 'my-article-title') or numeric post ID"
       ),
     subdomain: z
       .string()
       .optional()
-      .describe("Substack subdomain (e.g. 'platformer'). Defaults to your own newsletter."),
+      .describe("Substack subdomain (e.g. 'platformer'). Required if not authenticated and using a slug."),
   },
   async ({ slug, subdomain }) => {
     try {
@@ -320,7 +328,7 @@ server.tool(
 
 server.tool(
   "list_subscriptions",
-  "List all Substack newsletters the authenticated user subscribes to. Returns name, subdomain, membership type (free/paid), and URL for each subscription.",
+  "List all Substack newsletters the authenticated user subscribes to. Returns name, subdomain, membership type (free/paid), and URL. Requires authentication.",
   {},
   async () => {
     try {
@@ -386,7 +394,7 @@ server.tool(
 
 server.tool(
   "get_feed",
-  "Get the authenticated user's personalized Substack reader feed — recent posts from newsletters they subscribe to. Shows title, author, publication, engagement stats, and slug for fetching full content.",
+  "Get the authenticated user's personalized Substack reader feed — recent posts from newsletters they subscribe to. Requires authentication.",
   {
     limit: z
       .number()
@@ -452,7 +460,7 @@ server.tool(
 
 server.tool(
   "get_inbox",
-  "Get the authenticated user's inbox — a chronological list of ALL recent posts from every subscribed newsletter. Unlike get_feed (algorithmic, max 20), this returns posts in publish-time order and supports pagination to fetch more. Use 'pages' to control how far back to look (each page = ~20 posts).",
+  "Get the authenticated user's inbox — a chronological list of ALL recent posts from every subscribed newsletter. Unlike get_feed (algorithmic, max 20), this returns posts in publish-time order with pagination. Requires authentication.",
   {
     pages: z
       .number()

@@ -1,117 +1,135 @@
 # substack-article-mcp
 
-MCP server for Substack — access your articles (including paid/premium), reader feed, subscriptions, comments, and engagement data from Cursor, Claude Desktop, Claude Code, or any MCP client.
+MCP server for Substack — read articles, comments, feed, and subscriptions from Cursor, Claude Desktop, Claude Code, or any MCP client. Public content works without authentication; log in for premium/paywalled articles and personalized features.
 
 ---
 
 ## Quick Start
 
-### Step 1: Log in (once)
+Choose your AI client:
+
+### Cursor
+
+One command — logs in and configures Cursor automatically:
 
 ```bash
-npx -y substack-article-mcp login
+npx -y substack-article-mcp install --cursor
 ```
 
-A Chrome window opens where you enter your Substack email and password. **Your main Chrome stays open** — this is a separate, dedicated window that closes automatically after login.
+Restart Cursor after installation.
 
-The tool saves your session cookie and detects your newsletter subdomain. At the end, it offers to add the MCP to Cursor for you.
+### Claude Code
 
-**Alternative (no window):** If you'd rather paste cookies from DevTools:
+One command — logs in and adds the MCP globally:
 
 ```bash
-npx -y substack-article-mcp login --manual 'substack.sid=PASTE_HERE; substack.lli=PASTE_HERE'
+npx -y substack-article-mcp install --claude-code
 ```
 
-To get the values: DevTools (F12) → Application → Cookies → substack.com → copy `substack.sid` (and `substack.lli` for full paid-article access).
+### Claude Desktop
 
-### Step 2: Add the MCP to your app (if you didn't during login)
+Download the `.mcpb` extension from the [Releases page](https://github.com/jenny-ouyang/substack-article-mcp/releases) and double-click to install.
 
-**Claude Desktop (one-click):** Download the `.mcpb` file from the [Releases page](https://github.com/jenny-ouyang/substack-article-mcp/releases) and double-click to install.
+**Optional:** After installing, go to Extensions > Substack Articles > Settings and paste your Substack cookie to unlock paid articles, subscriptions, and your feed. Leave it empty for public-only access.
 
-**Cursor** — edit `~/.cursor/mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "substack": {
-      "command": "npx",
-      "args": ["-y", "substack-article-mcp"]
-    }
-  }
-}
-```
-
-**Claude Desktop** (manual — macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`): same format.
-
-**Claude Code:**
-
-```bash
-claude mcp add substack -- npx -y substack-article-mcp
-```
-
-Restart Cursor / Claude after changing config.
-
-### Step 3: Use it
+### Use it
 
 Ask from chat — the app starts the server automatically:
 
-- "List my recent Substack articles"
+- "List recent articles from platformer" *(public, no auth needed)*
 - "Get the full content of article 184929446" *(works with numeric IDs)*
-- "Get the article about AI tools from platformer" *(reads someone else's newsletter)*
-- "Show me the comments on my latest article"
-- "What newsletters do I subscribe to?"
-- "Show me my reader feed — what's new from my subscriptions?"
-- "Search my articles for [keyword]"
+- "Show me the comments on this article"
+- "Search platformer articles for 'antitrust'"
+- "What newsletters do I subscribe to?" *(requires auth)*
+- "Show me my reader feed" *(requires auth)*
 
 ---
 
-## CLI commands
+## Authentication
 
-| Command | What it does |
+**Authentication is optional.** Public tools (`list_articles`, `get_article`, `search_articles`, `get_comments`) work without any credentials as long as you specify a subdomain.
+
+Log in to unlock:
+- Full paid/premium article content
+- `list_subscriptions` — see all newsletters you follow
+- `get_feed` — your personalized reader feed
+- `get_inbox` — chronological inbox from all subscriptions
+- Auto-detected default subdomain (so you don't need to specify one)
+
+### How auth works
+
+The server checks for credentials in this priority order:
+
+1. **`SUBSTACK_COOKIE` environment variable** — used by Claude Desktop's `.mcpb` extension (set automatically from the optional cookie field in settings)
+2. **`~/.substack-article-mcp/auth.json`** — saved by the `login` or `install` command
+3. **No auth** — public content only
+
+### Refreshing credentials
+
+Substack cookies expire every few weeks. When tools start returning auth errors:
+
+- **Cursor / Claude Code:** Run `npx -y substack-article-mcp login` in your terminal
+- **Claude Desktop:** Go to Extensions > Substack Articles > Settings and paste a fresh cookie
+
+### Getting your cookie manually
+
+1. Open substack.com in Chrome and log in
+2. DevTools (F12) → Application → Cookies → substack.com
+3. Copy the value of `substack.sid` (and `substack.lli` for paid articles)
+4. Use as: `substack.sid=YOUR_VALUE; substack.lli=YOUR_LLI_VALUE`
+
+---
+
+## CLI Commands
+
+| Command | Description |
 |---------|-------------|
-| `npx -y substack-article-mcp login` | Opens a Chrome window to log in. Saves your session. |
-| `npx -y substack-article-mcp login --manual '...'` | Paste cookies from DevTools (no new window). |
-| `npx -y substack-article-mcp login --check` | Check auth status and cookie age. |
-| `npx -y substack-article-mcp --help` | Show help. |
+| `npx -y substack-article-mcp install --cursor` | Log in + add MCP to Cursor |
+| `npx -y substack-article-mcp install --claude-code` | Log in + add MCP to Claude Code |
+| `npx -y substack-article-mcp login` | Refresh credentials (Chrome login flow) |
+| `npx -y substack-article-mcp login --manual '<cookie>'` | Paste cookies directly |
+| `npx -y substack-article-mcp login --check` | Check auth status and cookie age |
+| `npx -y substack-article-mcp --help` | Show help |
+| `npx -y substack-article-mcp --version` | Show version |
 
-> **Do not** run `npx -y substack-article-mcp` with no arguments in your terminal. That starts the MCP stdio server and your terminal will look stuck. Cursor/Claude run it for you.
-
----
-
-## MCP tools
-
-| Tool | Description |
-|------|-------------|
-| `substack_auth_status` | Check if auth is valid, cookie age, subdomain. |
-| `list_articles` | List published articles (metadata, engagement, paid/free). |
-| `get_article` | Full article as markdown. Accepts a slug *or* numeric post ID. Includes premium content. |
-| `search_articles` | Search published articles by keyword. |
-| `get_comments` | Full comment tree — every comment, reply, author name, reactions. Accepts slug or ID. |
-| `list_subscriptions` | List all newsletters you subscribe to (paid, comped, and free). |
-| `get_feed` | Your personalized reader feed — recent posts from subscribed newsletters. |
-
-All content tools accept an optional `subdomain` parameter. This means you can read articles from **any** Substack newsletter you subscribe to, not just your own. For example, specify `subdomain: "platformer"` to read Platformer articles.
-
-`get_article` and `get_comments` also accept numeric post IDs (e.g. `184929446`) in addition to text slugs. When using an ID, the publication is auto-detected — no subdomain needed.
+> **Do not** run `npx -y substack-article-mcp` with no arguments in your terminal. That starts the MCP stdio server and your terminal will appear stuck. Your AI client starts it automatically.
 
 ---
 
-## How auth works
+## MCP Tools
 
-1. Run `login` once (and again when the session expires, typically every few weeks).
-2. The tool saves `substack.sid`, `substack.lli` (for paid content), and your subdomain to `~/.substack-article-mcp/auth.json`.
-3. The MCP server reads that file and sends cookies to Substack's API. No environment variables needed.
+| Tool | Auth Required | Description |
+|------|:---:|-------------|
+| `substack_auth_status` | No | Check auth status, cookie age, and get refresh guidance |
+| `list_articles` | No* | List published articles with metadata and engagement stats |
+| `get_article` | No* | Full article as markdown. Accepts slug or numeric post ID |
+| `search_articles` | No* | Search articles by keyword |
+| `get_comments` | No* | Full comment tree with replies and reactions |
+| `list_subscriptions` | Yes | All newsletters you subscribe to (paid, comped, free) |
+| `get_feed` | Yes | Personalized reader feed from subscribed newsletters |
+| `get_inbox` | Yes | Chronological inbox with pagination |
 
-**What about my main Chrome?** The `login` command uses a dedicated Chrome profile stored in `~/.substack-article-mcp/chrome-profile/`. This is completely separate from your regular Chrome — it does not touch your tabs, extensions, or browsing data.
+*\* Requires a `subdomain` parameter if not authenticated. Auth is needed for paid/premium content.*
 
-**Where does this run?** Entirely on your local machine. The MCP server runs as a subprocess of Cursor/Claude, communicating over stdio. No cloud hosting, no intermediary servers — your credentials never leave your computer.
+All content tools accept an optional `subdomain` parameter to read any newsletter (e.g., `subdomain: "platformer"`).
+
+`get_article` and `get_comments` also accept numeric post IDs (e.g., `184929446`). When using an ID, the publication is auto-detected.
+
+---
+
+## Privacy & Security
+
+- The server runs **entirely on your local machine** as a subprocess of your AI client
+- No cloud hosting, no intermediary servers
+- Your credentials never leave your computer
+- The `login` command uses a dedicated Chrome profile in `~/.substack-article-mcp/chrome-profile/` — completely separate from your regular Chrome
 
 ---
 
 ## Requirements
 
 - **Node.js** 18+
-- **Google Chrome** (for the `login` command only)
+- **Google Chrome** (for the `login` / `install` commands only — not needed for Claude Desktop)
 
 ## Disclaimer
 

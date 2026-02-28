@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "substack-article-mcp",
   "display_name": "Substack Articles",
-  "version": "0.5.1",
-  "description": "Access your Substack articles, comments, and engagement data — including paid/premium content.",
-  "long_description": "Read articles from any Substack newsletter you subscribe to, directly from Claude. Get full article content (including paywalled posts), comment threads, engagement metrics, your reader feed, and a list of all your subscriptions.\n\n**Setup:** After installing, run `npx -y substack-article-mcp login` once in your terminal to authenticate with Substack. This opens a Chrome window where you log in — your main Chrome stays untouched.\n\n**Tools included:**\n- **list_articles** — Browse recent articles from any newsletter\n- **get_article** — Full article content by slug or numeric ID (premium included)\n- **get_comments** — Complete comment tree with replies and reactions\n- **search_articles** — Search by keyword across any publication\n- **list_subscriptions** — See all newsletters you subscribe to\n- **get_feed** — Your personalized reader feed from subscribed newsletters",
+  "version": "0.7.0",
+  "description": "Access Substack articles, comments, feed, and subscriptions — including paid/premium content with optional authentication.",
+  "long_description": "Read articles from any Substack newsletter directly from Claude. Public articles work without authentication. Log in to also access paywalled posts, your subscriptions, reader feed, and inbox.\n\n**Authentication is optional.** Public tools (list_articles, get_article, search_articles, get_comments) work without a cookie. To access paid content, subscriptions, and your feed, paste your Substack cookie below.\n\n**How to get your cookie:**\n1. Open substack.com in Chrome and log in\n2. DevTools (F12) → Application → Cookies → substack.com\n3. Copy the value of 'substack.sid' (and optionally 'substack.lli' for paid articles)\n4. Paste as: substack.sid=YOUR_VALUE; substack.lli=YOUR_LLI_VALUE\n\n**Tools included:**\n- **list_articles** — Browse recent articles from any newsletter\n- **get_article** — Full article content by slug or numeric ID\n- **get_comments** — Complete comment tree with replies and reactions\n- **search_articles** — Search by keyword across any publication\n- **list_subscriptions** — See all newsletters you subscribe to (requires auth)\n- **get_feed** — Your personalized reader feed (requires auth)\n- **get_inbox** — Chronological inbox from all subscriptions (requires auth)",
   "author": {
     "name": "Jenny Ouyang",
     "url": "https://buildtolaunch.substack.com"
@@ -16,19 +16,31 @@
   "homepage": "https://www.npmjs.com/package/substack-article-mcp",
   "support": "https://github.com/jenny-ouyang/substack-article-mcp/issues",
   "license": "MIT",
-  "keywords": ["substack", "articles", "newsletter", "comments", "engagement"],
+  "keywords": ["substack", "articles", "newsletter", "comments", "engagement", "feed", "inbox"],
   "server": {
     "type": "node",
     "entry_point": "dist/index.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/dist/index.js"]
+      "args": ["${__dirname}/dist/index.js"],
+      "env": {
+        "SUBSTACK_COOKIE": "${user_config.substack_cookie}"
+      }
     }
   },
+  "user_config": [
+    {
+      "id": "substack_cookie",
+      "name": "Substack Cookie (optional)",
+      "description": "Paste your Substack cookie to access paid articles, subscriptions, and your feed. Format: substack.sid=VALUE; substack.lli=VALUE. Leave empty for public-only access.",
+      "required": false,
+      "sensitive": true
+    }
+  ],
   "tools": [
     {
       "name": "substack_auth_status",
-      "description": "Check if Substack authentication is valid and show cookie age"
+      "description": "Check authentication status and get guidance for refreshing credentials"
     },
     {
       "name": "list_articles",
@@ -36,7 +48,7 @@
     },
     {
       "name": "get_article",
-      "description": "Get full article content by slug or numeric post ID, including premium/paywalled content"
+      "description": "Get full article content by slug or numeric post ID — public articles work without auth"
     },
     {
       "name": "search_articles",
@@ -48,11 +60,15 @@
     },
     {
       "name": "list_subscriptions",
-      "description": "List all Substack newsletters you subscribe to with name, subdomain, and membership type"
+      "description": "List all Substack newsletters you subscribe to (requires auth)"
     },
     {
       "name": "get_feed",
-      "description": "Your personalized reader feed — recent posts from newsletters you subscribe to"
+      "description": "Your personalized reader feed — recent posts from subscribed newsletters (requires auth)"
+    },
+    {
+      "name": "get_inbox",
+      "description": "Chronological inbox from all subscribed newsletters with pagination (requires auth)"
     }
   ],
   "compatibility": {

@@ -1,5 +1,5 @@
 import { load } from "cheerio";
-import { getCookieHeaders, loadAuth } from "./auth.js";
+import { getCookieHeaders, getAuthGuidance, isAuthenticated, loadAuth } from "./auth.js";
 
 export interface SubstackArticle {
   id: number;
@@ -9,7 +9,7 @@ export interface SubstackArticle {
   description: string;
   publishedAt: string;
   canonicalUrl: string;
-  audience: string; // "everyone" or "only_paid"
+  audience: string;
   section?: { name: string };
   wordCount?: number;
   postDate: string;
@@ -23,12 +23,9 @@ export interface SubstackArticleFull extends SubstackArticle {
   truncatedBodyText?: string;
 }
 
-/**
- * Resolve which subdomain to use. Priority:
- * 1. Explicit subdomain passed per-request (e.g. "platformer" to read someone else's newsletter)
- * 2. SUBSTACK_SUBDOMAIN env var
- * 3. Subdomain stored during login (your own newsletter)
- */
+const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+
 function resolveBaseUrl(subdomain?: string): string {
   const resolved =
     subdomain ||
@@ -36,27 +33,39 @@ function resolveBaseUrl(subdomain?: string): string {
     loadAuth()?.subdomain;
   if (!resolved) {
     throw new Error(
-      "No subdomain specified. Either pass a subdomain parameter, or run `substack-article-mcp login` to set a default."
+      "No subdomain specified. Pass a subdomain parameter, set the SUBSTACK_SUBDOMAIN env var, or log in to set a default."
     );
   }
   return `https://${resolved}.substack.com`;
 }
 
+/**
+ * Make an authenticated (or unauthenticated) GET request to a Substack API endpoint.
+ * Works without cookies for public content; includes cookies when available.
+ */
 async function apiGet(endpoint: string, subdomain?: string): Promise<unknown> {
   const url = `${resolveBaseUrl(subdomain)}${endpoint}`;
-  const headers = getCookieHeaders();
+  const cookies = getCookieHeaders();
 
-  const res = await fetch(url, {
-    headers: {
-      ...headers,
-      Accept: "application/json",
-    },
-  });
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "User-Agent": USER_AGENT,
+  };
+  if (cookies) {
+    headers["Cookie"] = cookies["Cookie"];
+  }
+
+  const res = await fetch(url, { headers });
 
   if (res.status === 401 || res.status === 403) {
+    if (!isAuthenticated()) {
+      throw new Error(
+        `This content requires authentication. ${getAuthGuidance()}`
+      );
+    }
     throw new Error(
-      "Authentication failed. Your cookie may have expired. Run `substack-article-mcp login` to re-authenticate."
-    );
+      `Authentication failed (cookie may have expired). ${getAuthGuidance()}`
+      );
   }
 
   if (!res.ok) {
@@ -67,16 +76,19 @@ async function apiGet(endpoint: string, subdomain?: string): Promise<unknown> {
   return res.json();
 }
 
-/** Fetch article HTML page with auth and extract post body (fallback when API returns truncated paid content). */
 async function fetchArticleBodyFromPage(slug: string, subdomain?: string): Promise<string> {
   const baseUrl = resolveBaseUrl(subdomain);
-  const headers = getCookieHeaders();
-  const res = await fetch(`${baseUrl}/p/${slug}`, {
-    headers: {
-      ...headers,
-      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    },
-  });
+  const cookies = getCookieHeaders();
+
+  const headers: Record<string, string> = {
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "User-Agent": USER_AGENT,
+  };
+  if (cookies) {
+    headers["Cookie"] = cookies["Cookie"];
+  }
+
+  const res = await fetch(`${baseUrl}/p/${slug}`, { headers });
   if (!res.ok) return "";
   const html = await res.text();
   const $ = load(html);
@@ -143,26 +155,25 @@ export async function listArticles(options: {
   return data.map(normalizePost);
 }
 
-/**
- * Detect whether the input looks like a numeric post ID (e.g. "184929446")
- * rather than a text slug (e.g. "my-article-title").
- */
 function isNumericId(slugOrId: string): boolean {
   return /^\d+$/.test(slugOrId);
 }
 
-/**
- * Fetch a post by its numeric ID using the global by-id endpoint.
- * Returns the post data and the publication subdomain (useful when no subdomain was provided).
- */
 async function fetchPostById(id: string): Promise<{ post: Record<string, unknown>; subdomain?: string }> {
-  const headers = getCookieHeaders();
-  const res = await fetch(`https://substack.com/api/v1/posts/by-id/${id}`, {
-    headers: { ...headers, Accept: "application/json" },
-  });
+  const cookies = getCookieHeaders();
+
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "User-Agent": USER_AGENT,
+  };
+  if (cookies) {
+    headers["Cookie"] = cookies["Cookie"];
+  }
+
+  const res = await fetch(`https://substack.com/api/v1/posts/by-id/${id}`, { headers });
 
   if (res.status === 401 || res.status === 403) {
-    throw new Error("Authentication failed. Run `substack-article-mcp login` to re-authenticate.");
+    throw new Error(`Authentication failed. ${getAuthGuidance()}`);
   }
   if (!res.ok) {
     const text = await res.text();
@@ -200,9 +211,17 @@ export async function getArticle(
     !bodyHtml ||
     (truncatedBodyText != null && truncatedBodyText.length > 0) ||
     (wordCount != null && wordCount > 200 && bodyHtml.length < wordCount * 5);
+
   if (isPaid && likelyTruncated) {
-    const fromPage = await fetchArticleBodyFromPage(slug, resolvedSubdomain);
-    if (fromPage.length > bodyHtml.length) bodyHtml = fromPage;
+    if (isAuthenticated()) {
+      const fromPage = await fetchArticleBodyFromPage(slug, resolvedSubdomain);
+      if (fromPage.length > bodyHtml.length) bodyHtml = fromPage;
+    }
+    if (!bodyHtml || bodyHtml.length < 200) {
+      bodyHtml = (bodyHtml || "") +
+        "\n\n<!-- This is a paid article. The content above may be truncated. " +
+        "Log in with a Substack account that has an active subscription to access the full article. -->";
+    }
   }
 
   return {
@@ -245,10 +264,6 @@ function normalizeComment(raw: Record<string, unknown>): SubstackComment {
   };
 }
 
-/**
- * Fetch full comment tree for an article.
- * The slug is resolved to a post ID first via the article detail endpoint.
- */
 export async function getComments(
   slugOrId: string,
   subdomain?: string
@@ -294,16 +309,19 @@ export interface SubstackSubscription {
   createdAt: string;
 }
 
-/**
- * List all newsletters the authenticated user subscribes to.
- * Uses /api/v1/subscriptions which returns subscriptions + publications as sibling arrays.
- */
 export async function listSubscriptions(): Promise<SubstackSubscription[]> {
-  const headers = { ...getCookieHeaders(), Accept: "application/json" };
+  if (!isAuthenticated()) {
+    throw new Error(
+      `Listing subscriptions requires authentication. ${getAuthGuidance()}`
+    );
+  }
+
+  const cookies = getCookieHeaders()!;
+  const headers = { ...cookies, Accept: "application/json" };
   const res = await fetch("https://substack.com/api/v1/subscriptions?limit=500", { headers });
 
   if (res.status === 401 || res.status === 403) {
-    throw new Error("Authentication failed. Run `substack-article-mcp login` to re-authenticate.");
+    throw new Error(`Authentication failed (cookie may have expired). ${getAuthGuidance()}`);
   }
   if (!res.ok) throw new Error(`Substack API error ${res.status}`);
 
@@ -358,14 +376,15 @@ export interface InboxItem {
   wordCount?: number;
 }
 
-/**
- * Fetch the authenticated user's inbox — chronological list of posts from ALL subscribed newsletters.
- * Unlike getReaderFeed (algorithmic), this returns everything in publish-time order with pagination.
- *
- * @param pages Number of pages to fetch (each page = up to 20 items). Default 1.
- */
 export async function getInbox(pages: number = 1): Promise<InboxItem[]> {
-  const headers = { ...getCookieHeaders(), Accept: "application/json" };
+  if (!isAuthenticated()) {
+    throw new Error(
+      `Accessing your inbox requires authentication. ${getAuthGuidance()}`
+    );
+  }
+
+  const cookies = getCookieHeaders()!;
+  const headers = { ...cookies, Accept: "application/json" };
   const allItems: InboxItem[] = [];
   let cursor: string | null = null;
 
@@ -380,14 +399,13 @@ export async function getInbox(pages: number = 1): Promise<InboxItem[]> {
     const res = await fetch(`https://substack.com/api/v1/inbox/top?${params}`, { headers });
 
     if (res.status === 401 || res.status === 403) {
-      throw new Error("Authentication failed. Run `substack-article-mcp login` to re-authenticate.");
+      throw new Error(`Authentication failed (cookie may have expired). ${getAuthGuidance()}`);
     }
     if (!res.ok) throw new Error(`Substack API error ${res.status}`);
 
     const json = (await res.json()) as Record<string, unknown>;
     const postItems = (json["post_items"] || json["posts"] || []) as Record<string, unknown>[];
 
-    // Build publication lookup from inline publication objects
     const pubMap = new Map<number, Record<string, unknown>>();
     const pubs = (json["publications"] || []) as Record<string, unknown>[];
     for (const pub of pubs) {
@@ -395,10 +413,8 @@ export async function getInbox(pages: number = 1): Promise<InboxItem[]> {
     }
 
     for (const item of postItems) {
-      // inbox/top wraps posts in a container — the actual post may be nested under "post"
       const post = (item["post"] || item) as Record<string, unknown>;
       const pubId = post["publication_id"] as number;
-      // Try inline publication first, then the top-level publications array
       let pub = post["publishedBylines"]
         ? undefined
         : (post["publication"] as Record<string, unknown> | undefined);
@@ -424,13 +440,11 @@ export async function getInbox(pages: number = 1): Promise<InboxItem[]> {
       });
     }
 
-    // Get next cursor for pagination
     const nextCursor = json["cursor"] as string | undefined;
-    if (!nextCursor || postItems.length === 0) break; // No more pages
+    if (!nextCursor || postItems.length === 0) break;
     cursor = nextCursor;
   }
 
-  // Sort by publish date, newest first
   allItems.sort((a, b) => {
     const dateA = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
     const dateB = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
@@ -459,17 +473,20 @@ export interface FeedItem {
   wordCount?: number;
 }
 
-/**
- * Fetch the authenticated user's personalized reader feed — recent posts from subscribed newsletters.
- */
 export async function getReaderFeed(limit: number = 20): Promise<FeedItem[]> {
-  // Substack caps the reader feed at 20 items per request
+  if (!isAuthenticated()) {
+    throw new Error(
+      `Accessing your reader feed requires authentication. ${getAuthGuidance()}`
+    );
+  }
+
   const apiLimit = Math.min(limit, 20);
-  const headers = { ...getCookieHeaders(), Accept: "application/json" };
+  const cookies = getCookieHeaders()!;
+  const headers = { ...cookies, Accept: "application/json" };
   const res = await fetch(`https://substack.com/api/v1/reader/posts?limit=${apiLimit}`, { headers });
 
   if (res.status === 401 || res.status === 403) {
-    throw new Error("Authentication failed. Run `substack-article-mcp login` to re-authenticate.");
+    throw new Error(`Authentication failed (cookie may have expired). ${getAuthGuidance()}`);
   }
   if (!res.ok) throw new Error(`Substack API error ${res.status}`);
 
@@ -505,7 +522,6 @@ export async function getReaderFeed(limit: number = 20): Promise<FeedItem[]> {
     };
   });
 
-  // Sort by publish date, newest first
   items.sort((a, b) => {
     const dateA = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
     const dateB = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;

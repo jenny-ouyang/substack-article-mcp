@@ -1,21 +1,20 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
 import { homedir, platform } from "node:os";
 import { dirname, join } from "node:path";
 
 const MCP_SERVER_NAME = "substack";
 
-/** MCP entry with no env — server uses subdomain from auth.json after login. */
 const SERVER_ENTRY = {
   command: "npx",
   args: ["-y", "substack-article-mcp"],
 } as const;
 
-type ClientId = "cursor" | "claude-desktop" | "claude-code";
+export type ClientId = "cursor" | "claude-desktop" | "claude-code";
 
 interface ConfigPaths {
   cursor: string;
   "claude-desktop": string;
-  "claude-code": string | null;
 }
 
 function getConfigPaths(): ConfigPaths {
@@ -49,7 +48,6 @@ function getConfigPaths(): ConfigPaths {
   return {
     cursor: cursorPath,
     "claude-desktop": claudeDesktopPath,
-    "claude-code": null,
   };
 }
 
@@ -78,19 +76,19 @@ function ensureMcpServers(config: Record<string, unknown>): Record<string, unkno
   return config;
 }
 
-export function addToConfig(client: ClientId, _subdomain?: string): { path: string; updated: boolean } {
+/**
+ * Add the MCP server entry to a JSON config file (Cursor or Claude Desktop).
+ */
+export function addToConfig(client: "cursor" | "claude-desktop"): { path: string; updated: boolean } {
   const paths = getConfigPaths();
   const path = paths[client];
-  if (!path) {
-    throw new Error("claude-code does not use a config file; use: claude mcp add substack -- npx -y substack-article-mcp");
-  }
 
   const config = readJsonPath(path);
   const base = config ? ensureMcpServers(config) : { mcpServers: {} };
   const mcpServers = base.mcpServers as Record<string, unknown>;
   const existing = mcpServers[MCP_SERVER_NAME];
 
-  const entry = { command: SERVER_ENTRY.command, args: SERVER_ENTRY.args };
+  const entry = { command: SERVER_ENTRY.command, args: [...SERVER_ENTRY.args] };
 
   const same =
     existing &&
@@ -108,12 +106,30 @@ export function addToConfig(client: ClientId, _subdomain?: string): { path: stri
   return { path, updated: true };
 }
 
-export function removeFromConfig(client: ClientId): { path: string; removed: boolean } {
+/**
+ * Add MCP to Claude Code via `claude mcp add` CLI command.
+ */
+export function addToClaudeCode(): { success: boolean; output: string } {
+  const cmd = `claude mcp add -s user ${MCP_SERVER_NAME} -- npx -y substack-article-mcp`;
+  try {
+    const output = execSync(cmd, {
+      encoding: "utf-8",
+      timeout: 15_000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+    return { success: true, output: output || "MCP server added to Claude Code." };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes("already exists")) {
+      return { success: true, output: "MCP server already configured in Claude Code." };
+    }
+    return { success: false, output: `Failed to add MCP to Claude Code: ${msg}` };
+  }
+}
+
+export function removeFromConfig(client: "cursor" | "claude-desktop"): { path: string; removed: boolean } {
   const paths = getConfigPaths();
   const path = paths[client];
-  if (!path) {
-    throw new Error("claude-code has no config file to edit.");
-  }
 
   const config = readJsonPath(path);
   if (!config?.mcpServers || typeof config.mcpServers !== "object") {
@@ -128,28 +144,6 @@ export function removeFromConfig(client: ClientId): { path: string; removed: boo
   delete mcpServers[MCP_SERVER_NAME];
   writeJsonPath(path, config);
   return { path, removed: true };
-}
-
-export function listConfigStatus(): Array<{ client: string; path: string; configured: boolean }> {
-  const paths = getConfigPaths();
-  const results: Array<{ client: string; path: string; configured: boolean }> = [];
-
-  for (const [client, path] of Object.entries(paths)) {
-    if (!path) {
-      results.push({
-        client: client as string,
-        path: "(claude mcp add)",
-        configured: false,
-      });
-      continue;
-    }
-    const config = readJsonPath(path);
-    const mcpServers = config?.mcpServers && typeof config.mcpServers === "object" ? config.mcpServers : {};
-    const configured = MCP_SERVER_NAME in (mcpServers as Record<string, unknown>);
-    results.push({ client: client as string, path, configured });
-  }
-
-  return results;
 }
 
 export function getConfigPathsForHelp(): ConfigPaths {
