@@ -21,22 +21,22 @@
     "type": "node",
     "entry_point": "dist/index.js",
     "mcp_config": {
-      "command": "node",
-      "args": ["${__dirname}/dist/index.js"],
+      "command": "npx",
+      "args": ["-y", "substack-article-mcp@0.7.0"],
       "env": {
         "SUBSTACK_COOKIE": "${user_config.substack_cookie}"
       }
     }
   },
-  "user_config": [
-    {
-      "id": "substack_cookie",
-      "name": "Substack Cookie (optional)",
-      "description": "Paste your Substack cookie to access paid articles, subscriptions, and your feed. Format: substack.sid=VALUE; substack.lli=VALUE. Leave empty for public-only access.",
+  "user_config": {
+    "substack_cookie": {
+      "type": "string",
+      "title": "Substack Cookie (optional)",
+      "description": "Paste your Substack cookie to access paid articles, subscriptions, and your feed. Format: substack.sid=VALUE; substack.lli=VALUE — Leave empty for public-only access.",
       "required": false,
       "sensitive": true
     }
-  ],
+  },
   "tools": [
     {
       "name": "substack_auth_status",
