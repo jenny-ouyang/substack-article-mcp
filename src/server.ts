@@ -70,6 +70,9 @@ server.tool(
       if (hasAuth) {
         text += "A cookie is present but appears to be expired or invalid.\n\n";
       }
+      text += "IMPORTANT: Most tools still work without authentication!\n";
+      text += "list_articles, get_article, search_articles, and get_comments all work for PUBLIC content — just pass a 'subdomain' parameter (e.g. subdomain: 'platformer').\n\n";
+      text += "Authentication is only needed for: list_subscriptions, get_feed, get_inbox, and accessing paid/premium articles.\n\n";
       text += `To authenticate: ${getAuthGuidance()}`;
       return { content: [{ type: "text" as const, text }] };
     }
@@ -87,7 +90,7 @@ server.tool(
 
 server.tool(
   "list_articles",
-  "List published Substack articles with metadata (title, date, slug, engagement stats, paid/free status). Returns newest first by default. Works with any Substack newsletter — specify a subdomain, or uses your default when authenticated.",
+  "List published Substack articles with metadata (title, date, slug, engagement stats, paid/free status). Returns newest first by default. Works WITHOUT authentication — just pass a subdomain parameter (e.g. 'platformer' from platformer.substack.com). Extract the subdomain from any Substack URL the user provides.",
   {
     limit: z
       .number()
@@ -141,7 +144,7 @@ server.tool(
 
 server.tool(
   "get_article",
-  "Get full content of a Substack article as markdown. Accepts an article slug (e.g. 'my-article-title') OR a numeric post ID (e.g. '184929446'). When using a numeric ID, subdomain is auto-detected. Works without auth for public articles; authenticated access includes premium/paywalled content.",
+  "Get full content of a Substack article as markdown. Accepts an article slug (e.g. 'my-article-title') OR a numeric post ID (e.g. '184929446'). When using a numeric ID, subdomain is auto-detected. Works WITHOUT authentication for public articles — pass a subdomain parameter when reading someone else's newsletter.",
   {
     slug: z
       .string()
@@ -203,7 +206,7 @@ server.tool(
 
 server.tool(
   "search_articles",
-  "Search Substack articles by keyword. Returns matching articles with metadata. Works with any newsletter — specify a subdomain, or uses your default when authenticated.",
+  "Search Substack articles by keyword. Returns matching articles with metadata. Works WITHOUT authentication — pass a subdomain parameter (e.g. 'platformer' from platformer.substack.com).",
   {
     query: z.string().describe("Search query to find articles"),
     limit: z
@@ -278,7 +281,7 @@ function formatComment(c: SubstackComment, depth: number = 0): string {
 
 server.tool(
   "get_comments",
-  "Get all comments on a Substack article, including full text, author names, nested replies, and reaction counts. Returns the complete uncompressed comment tree.",
+  "Get all comments on a Substack article, including full text, author names, nested replies, and reaction counts. Works WITHOUT authentication — pass a subdomain parameter when needed.",
   {
     slug: z
       .string()

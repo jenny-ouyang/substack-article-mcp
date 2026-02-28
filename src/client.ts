@@ -33,7 +33,7 @@ function resolveBaseUrl(subdomain?: string): string {
     loadAuth()?.subdomain;
   if (!resolved) {
     throw new Error(
-      "No subdomain specified. Pass a subdomain parameter, set the SUBSTACK_SUBDOMAIN env var, or log in to set a default."
+      "No subdomain specified. You MUST pass a 'subdomain' parameter (e.g. subdomain: 'platformer' for platformer.substack.com). Extract the subdomain from the Substack URL the user provided."
     );
   }
   return `https://${resolved}.substack.com`;
