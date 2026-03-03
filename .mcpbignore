@@ -1,7 +1,6 @@
-# Source and dev files
-src/
+# Our TypeScript source (not needed — dist/ has compiled output)
+/src/
 tsconfig.json
-*.d.ts
 *.d.ts.map
 *.js.map
 PUBLISH.md
