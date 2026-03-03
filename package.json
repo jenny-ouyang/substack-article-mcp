@@ -1,6 +1,6 @@
 {
   "name": "substack-article-mcp",
-  "version": "0.7.1",
+  "version": "0.8.0",
   "description": "MCP server for Substack — read articles, comments, feed, and subscriptions from Claude, Cursor, or any MCP client. Works without auth for public content; log in for premium access.",
   "type": "module",
   "bin": {

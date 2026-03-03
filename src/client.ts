@@ -219,8 +219,8 @@ export async function getArticle(
     }
     if (!bodyHtml || bodyHtml.length < 200) {
       bodyHtml = (bodyHtml || "") +
-        "\n\n<!-- This is a paid article. The content above may be truncated. " +
-        "Log in with a Substack account that has an active subscription to access the full article. -->";
+        "\n\n<!-- PAID ARTICLE — content above may be truncated. " +
+        "If the user is a paid subscriber, suggest running the substack_login tool to authenticate and access the full article. -->";
     }
   }
 

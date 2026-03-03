@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { checkAuthStatus, getAuthGuidance, isAuthenticated } from "./auth.js";
+import { checkAuthStatus, getAuthGuidance, isAuthenticated, runLogin, getAuthFilePath } from "./auth.js";
 import {
   listArticles,
   getArticle,
@@ -73,7 +73,7 @@ server.tool(
       text += "IMPORTANT: Most tools still work without authentication!\n";
       text += "list_articles, get_article, search_articles, and get_comments all work for PUBLIC content — just pass a 'subdomain' parameter (e.g. subdomain: 'platformer').\n\n";
       text += "Authentication is only needed for: list_subscriptions, get_feed, get_inbox, and accessing paid/premium articles.\n\n";
-      text += `To authenticate: ${getAuthGuidance()}`;
+      text += "To authenticate: call the substack_login tool — it opens a Chrome window where the user can log in. Credentials are saved permanently.";
       return { content: [{ type: "text" as const, text }] };
     }
 
@@ -83,6 +83,64 @@ server.tool(
     text += `Subdomain: ${status.subdomain || process.env["SUBSTACK_SUBDOMAIN"] || "(not set)"}`;
 
     return { content: [{ type: "text" as const, text }] };
+  }
+);
+
+// ─── Tool: substack_login ───────────────────────────────────────
+
+server.tool(
+  "substack_login",
+  "Open a Chrome window so the user can log in to Substack. This is a ONE-TIME setup — credentials are saved permanently. Call this when the user wants to access paid articles, their subscriptions, feed, or inbox. A Chrome window will pop up on the user's screen where they enter their Substack email and password. After login, the window closes automatically and all tools will have full access. Only call this when the user explicitly agrees to log in.",
+  {},
+  async () => {
+    if (isAuthenticated()) {
+      const status = await checkAuthStatus();
+      if (status.authenticated) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Already authenticated ✓ (${status.cookieAge}). No need to log in again. If you're having issues, the cookie may need refreshing — call this tool again after confirming with the user.`,
+          }],
+        };
+      }
+    }
+
+    try {
+      await runLogin();
+      const newStatus = await checkAuthStatus();
+      if (newStatus.authenticated) {
+        let text = "✅ Login successful! Credentials saved.\n\n";
+        text += `Saved to: ${getAuthFilePath()}\n`;
+        if (newStatus.subdomain) {
+          text += `Default newsletter: ${newStatus.subdomain}.substack.com\n`;
+        }
+        text += "\nAll tools now have full access — including paid articles, subscriptions, feed, and inbox.";
+        return { content: [{ type: "text" as const, text }] };
+      } else {
+        return {
+          content: [{
+            type: "text" as const,
+            text: "Login completed but validation failed. The cookie may be expired or the login didn't complete properly. Please try again.",
+          }],
+        };
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("Could not find Chrome")) {
+        return {
+          content: [{
+            type: "text" as const,
+            text: "Google Chrome is required for the login flow but was not found on this system. Please install Chrome and try again.",
+          }],
+        };
+      }
+      return {
+        content: [{
+          type: "text" as const,
+          text: `Login failed: ${msg}`,
+        }],
+      };
+    }
   }
 );
 
@@ -183,7 +241,7 @@ server.tool(
       } else if (article.truncatedBodyText) {
         markdown +=
           article.truncatedBodyText +
-          "\n\n[Content truncated — this is a paid article. Log in to access the full content.]";
+          "\n\n[Content truncated — this is a paid article. If you're a subscriber, use the substack_login tool to authenticate and access the full content.]";
       } else {
         markdown += "(No article content available)";
       }
