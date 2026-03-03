@@ -73,7 +73,8 @@ server.tool(
       text += "IMPORTANT: Most tools still work without authentication!\n";
       text += "list_articles, get_article, search_articles, and get_comments all work for PUBLIC content — just pass a 'subdomain' parameter (e.g. subdomain: 'platformer').\n\n";
       text += "Authentication is only needed for: list_subscriptions, get_feed, get_inbox, and accessing paid/premium articles.\n\n";
-      text += "To authenticate: call the substack_login tool — it opens a Chrome window where the user can log in. Credentials are saved permanently.";
+      text += "To authenticate: call the substack_login tool — it opens a Chrome window where the user can log in. Credentials are saved permanently.\n\n";
+      text += "Alternative: the user can also run this in their terminal:\n  npx -y substack-article-mcp login\nCredentials are shared across all clients (Cursor, Claude Code, Claude Desktop).";
       return { content: [{ type: "text" as const, text }] };
     }
 
@@ -126,18 +127,20 @@ server.tool(
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const terminalFallback = '\n\nAlternative: run this in your terminal instead (works the same way):\n  npx -y substack-article-mcp login\n\nCredentials are shared — logging in from the terminal also works here.';
+
       if (msg.includes("Could not find Chrome")) {
         return {
           content: [{
             type: "text" as const,
-            text: "Google Chrome is required for the login flow but was not found on this system. Please install Chrome and try again.",
+            text: "Google Chrome is required for the login flow but was not found on this system." + terminalFallback,
           }],
         };
       }
       return {
         content: [{
           type: "text" as const,
-          text: `Login failed: ${msg}`,
+          text: `Login failed: ${msg}` + terminalFallback,
         }],
       };
     }

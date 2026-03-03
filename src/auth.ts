@@ -121,10 +121,11 @@ export function getCookieHeaders(): Record<string, string> | null {
 
 /** Auth guidance message tailored to the user's context. */
 export function getAuthGuidance(): string {
+  const terminalTip = ' Alternatively, run in terminal: npx -y substack-article-mcp login';
   if (process.env["SUBSTACK_COOKIE"] !== undefined) {
-    return "Your Substack cookie has expired or is invalid. Update it in your Claude Desktop extension settings, or use the substack_login tool to re-authenticate.";
+    return "Your Substack cookie has expired or is invalid. Update it in your Claude Desktop extension settings, or use the substack_login tool to re-authenticate." + terminalTip;
   }
-  return "Not authenticated. Use the substack_login tool to open a Chrome window and log in — credentials are saved permanently.";
+  return "Not authenticated. Use the substack_login tool to open a Chrome window and log in — credentials are saved permanently." + terminalTip;
 }
 
 function findChrome(): string | null {
