@@ -100,6 +100,16 @@ export function htmlToMarkdown(html: string): string {
         }
         return `- ${innerText.trim()}\n`;
       }
+      case "video": {
+        const src = $el.attr("src") || $el.find("source").first().attr("src") || "";
+        if (src) return `\n[Video: ${src}]\n\n`;
+        return "";
+      }
+      case "iframe": {
+        const src = $el.attr("src") || "";
+        if (src) return `\n[Embedded: ${src}]\n\n`;
+        return "";
+      }
       case "div":
       case "span":
       case "section":

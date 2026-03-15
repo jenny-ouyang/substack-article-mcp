@@ -249,6 +249,32 @@ server.tool(
         markdown += "(No article content available)";
       }
 
+      // Append media section for video/audio posts
+      if (article.postType === "podcast" || article.podcastUrl || article.muxPlaybackId) {
+        markdown += "\n\n---\n\n## Media\n\n";
+
+        if (article.podcastDuration) {
+          const mins = Math.round(article.podcastDuration / 60);
+          const type = article.muxPlaybackId ? "Video" : "Audio";
+          markdown += `**Type:** ${type} · ${mins} min\n\n`;
+        }
+
+        if (article.podcastUrl) {
+          markdown += `**Audio stream:** ${article.podcastUrl}\n\n`;
+        }
+
+        if (article.muxPlaybackId) {
+          markdown += `**Video (HLS):** https://stream.mux.com/${article.muxPlaybackId}.m3u8\n`;
+          markdown += `*(Pass HLS URL to Gemini for video analysis; use Audio stream with Whisper for transcription)*\n\n`;
+        }
+
+        if (article.transcriptText) {
+          markdown += `---\n\n## Full Transcript\n\n${article.transcriptText}\n`;
+        } else if (article.podcastUrl) {
+          markdown += `*(No auto-generated transcript available — download audio stream for manual transcription)*\n`;
+        }
+      }
+
       return { content: [{ type: "text" as const, text: markdown }] };
     } catch (error) {
       return {

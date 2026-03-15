@@ -21,6 +21,11 @@ export interface SubstackArticle {
 export interface SubstackArticleFull extends SubstackArticle {
   bodyHtml: string;
   truncatedBodyText?: string;
+  postType?: string;       // "podcast" for video/audio posts
+  podcastUrl?: string;     // direct audio stream URL
+  podcastDuration?: number; // seconds
+  muxPlaybackId?: string;  // for HLS stream construction
+  transcriptText?: string; // full transcript parsed from VTT (if available)
 }
 
 const USER_AGENT =
@@ -74,6 +79,41 @@ async function apiGet(endpoint: string, subdomain?: string): Promise<unknown> {
   }
 
   return res.json();
+}
+
+function parseVttToText(vtt: string): string {
+  return vtt
+    .split("\n")
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed === "WEBVTT") return false;
+      // Skip timestamp lines (e.g. "00:00:05.000 --> 00:00:10.000")
+      if (/^\d{2}:\d{2}[\d:.]+\s*-->\s*/.test(trimmed)) return false;
+      // Skip cue identifier lines (pure numbers)
+      if (/^\d+$/.test(trimmed)) return false;
+      return true;
+    })
+    .map((line) =>
+      // Strip WebVTT voice span tags: <v SPEAKER_00>, </v>, <c>, etc.
+      line.replace(/<\/?[^>]+>/g, "").trim()
+    )
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+async function fetchTranscriptText(vttUrl: string): Promise<string | undefined> {
+  try {
+    const res = await fetch(vttUrl, {
+      headers: { "User-Agent": "Mozilla/5.0" },
+    });
+    if (!res.ok) return undefined;
+    const text = await res.text();
+    return parseVttToText(text);
+  } catch {
+    return undefined;
+  }
 }
 
 async function fetchArticleBodyFromPage(slug: string, subdomain?: string): Promise<string> {
@@ -224,10 +264,53 @@ export async function getArticle(
     }
   }
 
+  // Extract media fields — all optional, never throws
+  let postType: string | undefined;
+  let podcastUrl: string | undefined;
+  let podcastDuration: number | undefined;
+  let muxPlaybackId: string | undefined;
+  let transcriptText: string | undefined;
+
+  try {
+    postType = raw["type"] as string | undefined;
+    podcastUrl = raw["podcast_url"] as string | undefined;
+    podcastDuration = raw["podcast_duration"] as number | undefined;
+
+    const videoUpload = raw["videoUpload"] as Record<string, unknown> | undefined;
+    if (videoUpload) {
+      muxPlaybackId = videoUpload["mux_playback_id"] as string | undefined;
+
+      // Prefer transcript from extracted audio (higher quality than raw video)
+      const extractedAudio = videoUpload["extractedAudio"] as Record<string, unknown> | undefined;
+      const transcription = (extractedAudio?.["transcription"] ?? videoUpload["transcription"]) as Record<string, unknown> | undefined;
+      const signedCaptions = transcription?.["signed_captions"] as Array<Record<string, unknown>> | undefined;
+      const vttUrl = signedCaptions?.[0]?.["url"] as string | undefined;
+      if (vttUrl) {
+        transcriptText = await fetchTranscriptText(vttUrl);
+      }
+    } else {
+      // Audio-only posts: check podcastUpload for transcript
+      const podcastUpload = raw["podcastUpload"] as Record<string, unknown> | undefined;
+      const transcription = podcastUpload?.["transcription"] as Record<string, unknown> | undefined;
+      const signedCaptions = transcription?.["signed_captions"] as Array<Record<string, unknown>> | undefined;
+      const vttUrl = signedCaptions?.[0]?.["url"] as string | undefined;
+      if (vttUrl) {
+        transcriptText = await fetchTranscriptText(vttUrl);
+      }
+    }
+  } catch {
+    // Media extraction failure is always non-fatal
+  }
+
   return {
     ...normalizePost(raw),
     bodyHtml,
     truncatedBodyText,
+    postType,
+    podcastUrl,
+    podcastDuration,
+    muxPlaybackId,
+    transcriptText,
   };
 }
 
